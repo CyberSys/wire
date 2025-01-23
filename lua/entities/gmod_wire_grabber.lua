@@ -14,11 +14,12 @@ function ENT:Initialize()
 	self:PhysicsInit( SOLID_VPHYSICS )
 	self:SetMoveType( MOVETYPE_VPHYSICS )
 	self:SetSolid( SOLID_VPHYSICS )
-	self.Inputs = Wire_CreateInputs(self, { "Grab","Strength" })
+	self.Inputs = Wire_CreateInputs(self, { "Grab","Strength (The strength of the weld. The weld will break if enough force is applied. Setting to zero makes the weld unbreakable.)","Range" })
 	self.Outputs = Wire_CreateOutputs(self, {"Holding", "Grabbed Entity [ENTITY]"})
 	self.WeldStrength = 0
 	self.Weld = nil
 	self.WeldEntity = nil
+	self.EntHadGravity = true
 	self.ExtraProp = nil
 	self.ExtraPropWeld = nil
 	self:GetPhysicsObject():SetMass(10)
@@ -57,7 +58,7 @@ end
 function ENT:ResetGrab()
 	if IsValid(self.Weld) then
 		self.Weld:Remove()
-		if IsValid(self.WeldEntity) and IsValid(self.WeldEntity:GetPhysicsObject()) and self.Gravity then
+		if self.EntHadGravity and IsValid(self.WeldEntity) and IsValid(self.WeldEntity:GetPhysicsObject()) and self.Gravity then
 			self.WeldEntity:GetPhysicsObject():EnableGravity(true)
 		end
 	end
@@ -75,12 +76,12 @@ function ENT:ResetGrab()
 end
 
 function ENT:CanGrab(trace)
-	-- Bail if we hit world or a player
-	if not IsValid(trace.Entity) or trace.Entity:IsPlayer() then return false end
+	if not trace.Entity or not isentity(trace.Entity) then return false end
+	if (not trace.Entity:IsValid() and not trace.Entity:IsWorld()) or trace.Entity:IsPlayer() then return false end
 	-- If there's no physics object then we can't constraint it!
 	if not util.IsValidPhysicsObject(trace.Entity, trace.PhysicsBone) then return false end
-	
-	if not gamemode.Call( "CanTool", self:GetPlayer(), trace, "weld" ) then return false end
+
+	if not WireLib.CanTool(self:GetPlayer(), trace.Entity, "weld") then return false end
 
 	return true
 end
@@ -118,6 +119,7 @@ function ENT:TriggerInput(iname, value)
 					--Msg("+Weld2\n")
 				end
 			end
+
 			if self.Gravity then
 				trace.Entity:GetPhysicsObject():EnableGravity(false)
 			end
@@ -125,6 +127,7 @@ function ENT:TriggerInput(iname, value)
 			self.WeldEntity = trace.Entity
 			self.Weld = const
 			self.ExtraPropWeld = const2
+			self.EntHadGravity = trace.Entity:GetPhysicsObject():IsGravityEnabled()
 
 			self:SetColor(Color(255, 0, 0, self:GetColor().a))
 			Wire_TriggerOutput(self, "Holding", 1)
@@ -136,12 +139,14 @@ function ENT:TriggerInput(iname, value)
 		end
 	elseif iname == "Strength" then
 		self.WeldStrength = math.max(value,0)
+	elseif iname == "Range" then
+		self:SetBeamLength(math.Clamp(value,0,32000))
 	end
 end
 
 --duplicator support (TAD2020)
 function ENT:BuildDupeInfo()
-	local info = self.BaseClass.BuildDupeInfo(self) or {}
+	local info = BaseClass.BuildDupeInfo(self) or {}
 
 	if self.WeldEntity and self.WeldEntity:IsValid() then
 		info.WeldEntity = self.WeldEntity:EntIndex()
@@ -155,7 +160,7 @@ function ENT:BuildDupeInfo()
 end
 
 function ENT:ApplyDupeInfo(ply, ent, info, GetEntByID)
-	self.BaseClass.ApplyDupeInfo(self, ply, ent, info, GetEntByID)
+	BaseClass.ApplyDupeInfo(self, ply, ent, info, GetEntByID)
 
 	self.WeldEntity = GetEntByID(info.WeldEntity)
 

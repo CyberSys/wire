@@ -12,6 +12,7 @@ end)
 __e2setcost(1)
 
 --- If <activate> != 0 the expression will execute once every game tick
+[deprecated = "Use the tick event instead"]
 e2function void runOnTick(activate)
     if activate ~= 0 then
         registered_chips[self.entity] = true
@@ -21,8 +22,9 @@ e2function void runOnTick(activate)
 end
 
 --- Returns 1 if the current execution was caused by "runOnTick"
+[nodiscard, deprecated = "Use the tick event instead"]
 e2function number tickClk()
-	return tickrun
+	return self.data.tickrun and 1 or 0
 end
 
 local function Expression2TickClock()
@@ -31,19 +33,23 @@ local function Expression2TickClock()
 	-- this additional step is needed because we cant modify registered_chips while it is being iterated.
 	local i = 1
 	for entity,_ in pairs(registered_chips) do
-		if entity:IsValid() then 
+		if entity:IsValid() then
 			ents[i] = entity
 			i = i + 1
 		end
 	end
 
-	tickrun = 1
 	for _,entity in ipairs(ents) do
+		entity.context.data.tickrun = true
 		entity:Execute()
+		entity.context.data.tickrun = nil
 	end
-	tickrun = 0
+
+	E2Lib.triggerEvent("tick")
 end
 hook.Add("Think", "Expression2TickClock", Expression2TickClock)
 timer.Create("Expression2TickClock", 5, 0, function()
 	hook.Add("Think", "Expression2TickClock", Expression2TickClock)
 end)
+
+E2Lib.registerEvent("tick")

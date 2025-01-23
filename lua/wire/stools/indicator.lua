@@ -4,13 +4,15 @@ WireToolSetup.open( "indicator", "Indicator", "gmod_wire_indicator", nil, "Indic
 if CLIENT then
 	language.Add( "tool.wire_indicator.name", "Indicator Tool (Wire)" )
 	language.Add( "tool.wire_indicator.desc", "Spawns a indicator for use with the wire system." )
-	language.Add( "tool.wire_indicator.0", "Primary: Create/Update Indicator" )
 	language.Add( "ToolWireIndicator_a_value", "A Value:" )
 	language.Add( "ToolWireIndicator_a_colour", "A Colour:" )
 	language.Add( "ToolWireIndicator_b_value", "B Value:" )
 	language.Add( "ToolWireIndicator_b_colour", "B Colour:" )
 	language.Add( "ToolWireIndicator_Material", "Material:" )
 	language.Add( "ToolWireIndicator_90", "Rotate segment 90" )
+	TOOL.Information = { { name = "left", text = "Create/Update " .. TOOL.Name } }
+
+	WireToolSetup.setToolMenuIcon( "icon16/lightbulb_add.png" )
 end
 WireToolSetup.BaseLang()
 
@@ -58,7 +60,7 @@ function TOOL:GetAngle( trace )
 	local Ang = trace.HitNormal:Angle()
 	local Model = self:GetModel()
 	--these models get mounted differently
-	if Model == "models/props_borealis/bluebarrel001.mdl" || Model == "models/props_junk/PopCan01a.mdl" then
+	if Model == "models/props_borealis/bluebarrel001.mdl" or Model == "models/props_junk/PopCan01a.mdl" then
 		return Ang + Angle(-90, 0, 0)
 	elseif Model == "models/props_trainstation/trainstation_clock001.mdl" or Model == "models/segment.mdl" or Model == "models/segment2.mdl" then
 		return Ang + Angle(0, 0, (self:GetClientNumber("rotate90") * 90))

@@ -16,7 +16,12 @@ function ENT:Initialize()
 	for i=3,12 do
 		outputs[i] = "Entity" .. (i-2) .. " [ENTITY]"
 	end
-	self.Inputs = WireLib.CreateInputs( self, { "Entity [ENTITY]", "Add Entity", "Remove Entity", "Clear Entities" } )
+	self.Inputs = WireLib.CreateInputs( self, {
+		"Entity (This entity will be added or removed once the other two inputs are changed) [ENTITY]",
+		"Add Entity (Change to non-zero value to add the entity specified by the 'Entity' input)",
+		"Remove Entity (Change to non-zero value to remove the entity specified by the 'Entity' input)",
+		"Clear Entities (Removes all entities from the marker)"
+	} )
 	self.Outputs = WireLib.CreateOutputs( self, outputs )
 	self:SetOverlayText( "Number of entities linked: 0" )
 end
@@ -28,16 +33,16 @@ function ENT:TriggerInput( name, value )
 		end
 	elseif (name == "Add Entity") then
 		if IsValid(self.Target) then
-			if (value != 0) then
+			if (value ~= 0) then
 				local bool, index = self:CheckEnt( self.Target )
-				if (!bool) then
+				if (not bool) then
 					self:LinkEnt( self.Target )
 				end
 			end
 		end
 	elseif (name == "Remove Entity") then
 		if IsValid(self.Target) then
-			if (value != 0) then
+			if (value ~= 0) then
 				local bool, index = self:CheckEnt( self.Target )
 				if (bool) then
 					self:UnlinkEnt( self.Target )
@@ -94,7 +99,9 @@ end
 
 function ENT:ClearEntities()
 	for i=1,#self.Marks do
-		self.Marks[i]:RemoveCallOnRemove( "AdvEMarker.Unlink" )
+		if self.Marks[i]:IsValid() then
+			self.Marks[i]:RemoveCallOnRemove( "AdvEMarker.Unlink" )
+		end
 	end
 	self.Marks = {}
 	self:UpdateOutputs()
@@ -107,7 +114,7 @@ end
 duplicator.RegisterEntityClass( "gmod_wire_adv_emarker", WireLib.MakeWireEnt, "Data" )
 
 function ENT:BuildDupeInfo()
-	local info = self.BaseClass.BuildDupeInfo(self) or {}
+	local info = BaseClass.BuildDupeInfo(self) or {}
 
 	if next(self.Marks) then
 		local tbl = {}
@@ -122,7 +129,7 @@ function ENT:BuildDupeInfo()
 end
 
 function ENT:ApplyDupeInfo(ply, ent, info, GetEntByID)
-	self.BaseClass.ApplyDupeInfo(self, ply, ent, info, GetEntByID)
+	BaseClass.ApplyDupeInfo(self, ply, ent, info, GetEntByID)
 
 	if (info.marks) then
 		self.Marks = self.Marks or {}

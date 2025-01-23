@@ -14,7 +14,7 @@ function ENT:Initialize()
 	self:PhysicsInit( SOLID_VPHYSICS )
 	self:SetMoveType( MOVETYPE_VPHYSICS )
 	self:SetSolid( SOLID_VPHYSICS )
-	self.Inputs = Wire_CreateInputs(self, {"Write","Read","Value"})
+	self.Inputs = Wire_CreateInputs(self, {"Write","Read","Value","Range"})
 	self.Outputs = Wire_CreateOutputs(self, {"Data","Sector","LocalSector","Track","Stack","Address"})
 
 	self.Command = {}
@@ -47,6 +47,7 @@ function ENT:Initialize()
 	self.Command[29] = 0 //[R] Bytes per block
 	self.Command[30] = 0 //[R] Disk size (per stack)
 	self.Command[31] = 0 //[R] Disk volume (bytes total)
+	self.Command[32] = 0 //[R] Disk entity id
 
 	self.WriteBuffer = {}
 	self.PrevDiskEnt = nil
@@ -55,14 +56,15 @@ function ENT:Initialize()
 end
 
 function ENT:ReadCell(Address)
-	if (Address >= 0) && (Address < 512) then
+	Address = math.floor(Address)
+	if (Address >= 0) and (Address < 512) then
 		if (self.Command[Address]) then
 			return self.Command[Address]
 		else
 			return 0
 		end
 	end
-	if (Address >= 512) && (Address < 1024) then
+	if (Address >= 512) and (Address < 1024) then
 		if (self.WriteBuffer[Address-512]) then
 			return self.WriteBuffer[Address-512]
 		else
@@ -73,14 +75,15 @@ function ENT:ReadCell(Address)
 end
 
 function ENT:WriteCell(Address, value)
-	if (Address >= 0) && (Address < 512) then
+	Address = math.floor(Address)
+	if (Address >= 0) and (Address < 512) then
 		self.Command[Address] = value
 		if (Address == 8) then
 			self:DoJob()
 		end
 		return true
 	end
-	if (Address >= 512) && (Address < 1024) then
+	if (Address >= 512) and (Address < 1024) then
 		if (value ~= 0) then
 			self.WriteBuffer[Address-512] = value
 		else
@@ -109,6 +112,8 @@ function ENT:TriggerInput(iname, value)
 		self.Command[8] = 1
 		self.Command[9] = 1
 		self.WriteBuffer[0] = value
+	elseif(iname == "Range")then
+		self:SetBeamLength(math.Clamp(value,0,32000))
 	end
 end
 
@@ -121,7 +126,7 @@ function ENT:DoJob()
 			if (self.Command[11] ~= self.Command[7]) then dojob = false end
 		end
 		if (self.Command[12] ~= 0) then
-			if (self.Command[13] ~= self.Command[3]) || (self.Command[14] ~= self.Command[4]) then
+			if (self.Command[13] ~= self.Command[3]) or (self.Command[14] ~= self.Command[4]) then
 				dojob = false
 			end
 		end
@@ -132,7 +137,7 @@ function ENT:DoJob()
 			if (self.Command[0] ~= 0) then //write ray
 				disk.DiskMemory[sector_addr] = table.Copy(self.WriteBuffer)
 			else //read ray
-				self.WriteBuffer = disk.DiskMemory[sector_addr] or { [0] = 0 }
+				self.WriteBuffer = table.Copy(disk.DiskMemory[sector_addr]) or { [0] = 0 }
 			end
 		end
 	end
@@ -186,6 +191,7 @@ function ENT:Think()
 			self.Command[29] = disk.BytesPerBlock
 			self.Command[30] = disk.DiskSize
 			self.Command[31] = disk.DiskVolume
+			self.Command[32] = disk.Entity:EntIndex()
 		end
 
 		if ((track >= disk.FirstTrack) and (stack >= 0) and (sector >= 0) and
@@ -247,6 +253,7 @@ function ENT:Think()
 		self.Command[29] = 0
 		self.Command[30] = 0
 		self.Command[31] = 0
+		self.Command[32] = 0
 	end
 
 	//Update output

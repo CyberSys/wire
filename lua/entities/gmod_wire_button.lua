@@ -7,7 +7,7 @@ function ENT:SetupDataTables()
 	self:NetworkVar( "Bool", 0, "On" )
 end
 
-if CLIENT then 
+if CLIENT then
 	local halo_ent, halo_blur
 
 	function ENT:Initialize()
@@ -20,7 +20,7 @@ if CLIENT then
 
 	function ENT:Draw()
 		self:DoNormalDraw(true,false)
-		if LocalPlayer():GetEyeTrace().Entity == self and EyePos():Distance( self:GetPos() ) < 512 then
+		if LocalPlayer():GetEyeTrace().Entity == self and EyePos():DistToSqr( self:GetPos() ) < 512^2 and GetConVarNumber("wire_drawoutline")~=0 then
 			if self:GetOn() then
 				halo_ent = self
 				halo_blur = 4 + math.sin(CurTime()*20)*2
@@ -37,7 +37,7 @@ if CLIENT then
 			halo_ent = nil
 		end
 	end)
-	
+
 	return  -- No more client
 end
 
@@ -64,8 +64,8 @@ function ENT:Initialize()
 	self:SetSolid( SOLID_VPHYSICS )
 	self:SetUseType( SIMPLE_USE )
 
-	self.Outputs = Wire_CreateOutputs(self, { "Out" })
-	self.Inputs = Wire_CreateInputs(self, { "Set" })
+	WireLib.CreateOutputs(self, { "Out" })
+	WireLib.CreateInputs(self, { "Set" })
 	local anim = anims[self:GetModel()]
 	if anim then self:SetSequence(anim[2]) end
 end
@@ -80,9 +80,9 @@ function ENT:TriggerInput(iname, value)
 	end
 end
 
-function ENT:Use(ply)
+function ENT:Use(ply, caller)
 	if (not ply:IsPlayer()) then return end
-	if (self.PrevUser) and (self.PrevUser:IsValid()) then return end
+	if self.PrevUser and self.PrevUser:IsValid() then return end
 	if self.OutputEntID then
 		self.EntToOutput = ply
 	end
@@ -91,13 +91,16 @@ function ENT:Use(ply)
 
 		return
 	end
+	if IsValid(caller) and caller:GetClass() == "gmod_wire_pod" then
+		self.podpress = true
+	end
 
 	self:Switch(true)
 	self.PrevUser = ply
 end
 
 function ENT:Think()
-	self.BaseClass.Think(self)
+	BaseClass.Think(self)
 
 	if ( self:GetOn() ) then
 		if (not self.PrevUser)
@@ -124,7 +127,11 @@ function ENT:Setup(toggle, value_off, value_on, description, entityout)
 	self.entityout = entityout
 
 	if entityout then
-		WireLib.AdjustSpecialOutputs(self, { "Out", "EntID" , "Entity" }, { "NORMAL", "NORMAL" , "ENTITY" })
+		WireLib.AdjustOutputs(self, {
+			"Out (The button's main output) [NORMAL]",
+			"EntID (The entity ID of the player who pressed the button) [NORMAL]" ,
+			"Entity (The player who pressed the button) [ENTITY]"
+		})
 		Wire_TriggerOutput(self, "EntID", 0)
 		Wire_TriggerOutput(self, "Entity", nil)
 		self.OutputEntID=true

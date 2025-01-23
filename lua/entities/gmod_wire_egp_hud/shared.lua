@@ -8,4 +8,9 @@ ENT.Purpose        = "EGP Hud"
 ENT.Instructions   = "WireLink To E2"
 
 ENT.Spawnable      = false
-ENT.AdminSpawnable = false
+ENT.IsEGP = true
+
+
+function ENT:SetupDataTables()
+	self:NetworkVar("Bool", 0, "Resolution")
+end

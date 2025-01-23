@@ -3,20 +3,14 @@
 	By: Dan (McLovin)
 ]]--
 
-local cv_max_transfer_size = CreateConVar( "wire_expression2_file_max_size", "100", { FCVAR_REPLICATED, FCVAR_ARCHIVE } ) //in kb
+local cv_max_transfer_size = CreateConVar("wire_expression2_file_max_size", "1024", { FCVAR_REPLICATED, FCVAR_ARCHIVE }, "Maximum file size in kibibytes.")
 
-local upload_buffer = {}
-local download_buffer = {}
-
-local upload_chunk_size = 20000 //Our overhead is pretty small so lets send it in moderate sized pieces, no need to max out the buffer
-
-local allowed_directories = { //prefix with >(allowed directory)/file.txt for files outside of e2files/ directory
+local allowed_directories = { --prefix with >(allowed directory)/file.txt for files outside of e2files/ directory
 	["e2files"] = "e2files",
 	["e2shared"] = "expression2/e2shared",
 	["cpushared"] = "cpuchip/e2shared",
 	["gpushared"] = "gpuchip/e2shared",
 	["spushared"] = "spuchip/e2shared",
-	["dupeshared"] = "adv_duplicator/e2shared"
 }
 
 for _,dir in pairs( allowed_directories ) do
@@ -48,88 +42,54 @@ local function process_filepath( filepath )
 	return string.GetPathFromFilename( fullpath ) or "e2files/", string.GetFileFromFilename( fullpath ) or "noname.txt"
 end
 
-/* --- File Read --- */
+--- File Read ---
 
-local function upload_callback()
-	if !upload_buffer or !upload_buffer.data then return end
-
-	local chunk_size = math.Clamp( string.len( upload_buffer.data ), 0, upload_chunk_size )
-
-	net.Start("wire_expression2_file_chunk")
-		net.WriteString(string.Left( upload_buffer.data, chunk_size ))
-	net.SendToServer()
-	upload_buffer.data = string.sub( upload_buffer.data, chunk_size + 1, string.len( upload_buffer.data ) )
-
-	if upload_buffer.chunk >= upload_buffer.chunks then
-		net.Start("wire_expression2_file_finish") net.SendToServer()
-		timer.Remove( "wire_expression2_file_upload" )
-		return
-	end
-
-	upload_buffer.chunk = upload_buffer.chunk + 1
-end
-
-net.Receive("wire_expression2_request_file_sp", function(netlen)
-	local fpath,fname = process_filepath(net.ReadString())
-	RunConsoleCommand("wire_expression2_file_singleplayer", fpath .. fname)
-end)
-
-net.Receive("wire_expression2_request_file", function(netlen)
+net.Receive("wire_expression2_request_file", function()
 	local fpath,fname = process_filepath(net.ReadString())
 	local fullpath = fpath .. fname
 
 	if file.Exists( fullpath,"DATA" ) and file.Size( fullpath, "DATA" ) <= (cv_max_transfer_size:GetInt() * 1024) then
-		local filedata = file.Read( fullpath,"DATA" ) or ""
-
-		local encoded = E2Lib.encode( filedata )
-
-		upload_buffer = {
-			chunk = 1,
-			chunks = math.ceil( string.len( encoded ) / upload_chunk_size ),
-			data = encoded
-		}
-
-		net.Start("wire_expression2_file_begin")
-			net.WriteUInt(string.len(filedata), 32)
+		local data = file.Read(fullpath, "DATA") or ""
+		net.Start("wire_expression2_file_upload")
+			net.WriteBool(true)
+			net.WriteUInt(#data, 32)
+			net.WriteStream(data)
 		net.SendToServer()
 
-		timer.Create( "wire_expression2_file_upload", 1/60, upload_buffer.chunks, upload_callback )
 	else
-		net.Start("wire_expression2_file_begin")
-			net.WriteUInt(0, 32) // 404 file not found, send len of 0
+		net.Start("wire_expression2_file_upload")
+			net.WriteBool(false)
 		net.SendToServer()
 	end
-end )
+end)
 
-/* --- File Write --- */
-net.Receive("wire_expression2_file_download_begin", function( netlen )
-	local fpath,fname = process_filepath( net.ReadString() )
-	if string.GetExtensionFromFilename( string.lower(fname) ) != "txt" then return end
-	if not file.Exists(fpath, "DATA") then file.CreateDir(fpath) end
-	download_buffer = {
-		name = fpath .. fname,
-		data = ""
-	}
-end )
+--- File Write ---
+net.Receive("wire_expression2_file_download", function()
+	local path, name = process_filepath(net.ReadString())
+	local append = net.ReadBool()
+	if not E2Lib.isValidFileWritePath(name) then
+		local stream = net.ReadStream(nil, function() end)
+		if stream then
+			stream:Remove()
+		else
+			ErrorNoHaltWithStack("Warning! Looks like the server uses an outdated version of Expression2's file module! Please update to the latest Wiremod version.")
+		end
 
-net.Receive("wire_expression2_file_download_chunk", function( netlen )
-	if not download_buffer.name then return end
-	download_buffer.data = (download_buffer.data or "") .. net.ReadString()
-end )
-
-net.Receive("wire_expresison2_file_download_finish", function( netlen )
-	if not download_buffer.name then return end
-
-	if net.ReadBit() ~= 0 then
-		file.Append( download_buffer.name, download_buffer.data )
-	else
-		file.Write( download_buffer.name, download_buffer.data )
+		return
 	end
-end )
+	if not file.Exists(path, "DATA") then file.CreateDir(path) end
+	net.ReadStream(nil, function(data)
+		if append then
+			file.Append(path .. name, data)
+		else
+			file.Write(path .. name, data)
+		end
+	end)
+end)
 
-/* --- File List --- */
+--- File List ---
 
-net.Receive( "wire_expression2_request_list", function( netlen )
+net.Receive( "wire_expression2_request_list", function()
 	local dir = process_filepath(net.ReadString())
 
 	net.Start("wire_expression2_file_list")
@@ -137,11 +97,13 @@ net.Receive( "wire_expression2_request_list", function( netlen )
 		net.WriteUInt(#files + #folders, 16)
 		for _,fop in pairs(files) do
 			if string.GetExtensionFromFilename( fop ) == "txt" then
-				net.WriteString(E2Lib.encode( fop ))
+				net.WriteUInt(#fop, 16)
+				net.WriteData(fop)
 			end
 		end
 		for _,fop in pairs(folders) do
-			net.WriteString(E2Lib.encode( fop.."/" ))
+			net.WriteUInt(#fop, 16)
+			net.WriteData(fop .. "/")
 		end
 	net.SendToServer()
-end )
+end)

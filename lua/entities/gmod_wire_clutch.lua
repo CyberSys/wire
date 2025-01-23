@@ -40,7 +40,7 @@ end
 ---------------------------------------------------------]]
 
 function ENT:ClutchExists( Ent1, Ent2 )
-	for k, v in pairs( self.clutch_ballsockets ) do
+	for k, _ in pairs( self.clutch_ballsockets ) do
 		if  ( Ent1 == k.Ent1 and Ent2 == k.Ent2 ) or
 			( Ent1 == k.Ent2 and Ent2 == k.Ent1 ) then
 			return true
@@ -54,7 +54,7 @@ end
 -- Returns an array with each entry as a table containing Ent1, Ent2
 function ENT:GetConstrainedPairs()
 	local ConstrainedPairs = {}
-	for k, v in pairs( self.clutch_ballsockets ) do
+	for k, _ in pairs( self.clutch_ballsockets ) do
 		if IsValid( k ) then
 			table.insert( ConstrainedPairs, {Ent1 = k.Ent1, Ent2 = k.Ent2} )
 		else
@@ -88,6 +88,20 @@ function ENT:AddClutch( Ent1, Ent2, friction )
 
 	if ballsocket then
 		self.clutch_ballsockets[ballsocket] = true
+		ballsocket:CallOnRemove( "WireClutchRemove", function()
+			if self.clutch_ballsockets[ballsocket] then
+				-- The table value is still true so something unknown killed the ballsocket
+				-- Set the table so that nothing else runs into issues
+				self.clutch_ballsockets[ballsocket] = nil
+				self:UpdateOverlay()
+				-- Wait a frame so nothing bad happens, then rebuild it
+				timer.Simple(0, function()
+					if self:IsValid() then
+						self:AddClutch( Ent1, Ent2, friction )
+					end
+				end)
+			end
+		end)
 	end
 
 	self:UpdateOverlay()
@@ -116,12 +130,12 @@ function ENT:SetClutchFriction( const, friction )
 		local Ent2 = const.Ent2
 
 		const:Remove()
-		
+
 		local newconst = NewBallSocket( Ent1, Ent2, friction )
 		if newconst then
 			self.clutch_ballsockets[newconst] = true
 		end
-		
+
 	else
 		print("Wire Clutch: Attempted to set friction on invalid constraint")
 	end
@@ -131,13 +145,9 @@ end
 
 
 function ENT:OnRemove()
-	
-	for k, v in pairs( self.clutch_ballsockets ) do
-		
+	for k in pairs( self.clutch_ballsockets ) do
 		self:RemoveClutch( k )
-		
 	end
-	
 end
 
 
@@ -147,7 +157,7 @@ end
 ---------------------------------------------------------]]
 -- Used for setting/restoring entity mass when creating the clutch constraint
 local function SaveMass( MassTable, ent )
-	if IsValid( ent ) and !MassTable[ent] then
+	if IsValid( ent ) and not MassTable[ent] then
 		local Phys = ent:GetPhysicsObject()
 		if IsValid( Phys ) then
 			MassTable[ent] = Phys:GetMass()
@@ -174,8 +184,8 @@ function ENT:UpdateFriction()
 	-- Update all registered ball socket constraints
 	local numconstraints = 0	-- Used to calculate the delay between inputs
 
-	for k, v in pairs( clutch_ballsockets ) do
-		if !IsValid( k ) then
+	for k, _ in pairs( clutch_ballsockets ) do
+		if not IsValid( k ) then
 			self:RemoveClutch( k )
 
 		else
@@ -205,15 +215,16 @@ local function ClutchDelayEnd( ent )
 	end
 end
 
+local Clutch_Max = GetConVar("wire_clutch_maxrate")
 
 function ENT:TriggerInput( iname, value )
 	if iname == "Friction" then
-		if !self.ClutchDelay then
+		if not self.ClutchDelay then
 			self.clutch_friction = value
 
 			-- Create a delay to avoid server lag
 			local numconstraints = self:UpdateFriction()
-			local maxrate = math.max( GetConVarNumber( "wire_clutch_maxrate", 20 ), 1 )
+			local maxrate = math.max( Clutch_Max:GetInt() or 20, 1 )
 			local Delay = numconstraints / maxrate
 
 			self.ClutchDelay = true
@@ -221,7 +232,7 @@ function ENT:TriggerInput( iname, value )
 
 		else
 			-- This should only happen if an error prevents the ClutchDelayEnd function from being called
-			if !timer.Exists( "wire_clutch_delay_" .. tostring(self:EntIndex())) then
+			if not timer.Exists( "wire_clutch_delay_" .. tostring(self:EntIndex())) then
 				self.ClutchDelay = false
 			end
 
@@ -239,7 +250,7 @@ end
    Linked entities are stored and recalled by their EntIndexes
 ---------------------------------------------------------]]
 function ENT:BuildDupeInfo()
-	local info = self.BaseClass.BuildDupeInfo(self) or {}
+	local info = BaseClass.BuildDupeInfo(self) or {}
 	info.constrained_pairs = {}
 
 	for k, v in pairs( self:GetConstrainedPairs() ) do
@@ -252,16 +263,18 @@ function ENT:BuildDupeInfo()
 end
 
 function ENT:ApplyDupeInfo(ply, ent, info, GetEntByID)
-	self.BaseClass.ApplyDupeInfo(self, ply, ent, info, GetEntByID)
+	BaseClass.ApplyDupeInfo(self, ply, ent, info, GetEntByID)
 
-	for k, v in pairs( info.constrained_pairs ) do
+	local Ent1, Ent2
+	for _, v in pairs( info.constrained_pairs ) do
 		Ent1 = GetEntByID(v.Ent1)
 		Ent2 = GetEntByID(v.Ent2, game.GetWorld())
 
 		if IsValid(Ent1) and
-		   Ent1 ~= Ent2 and
-		   hook.Run( "CanTool", ply, WireLib.dummytrace(Ent1), "ballsocket_adv" ) and
-		   hook.Run( "CanTool", ply, WireLib.dummytrace(Ent2), "ballsocket_adv" ) then
+			Ent1 ~= Ent2 and
+			WireLib.CanTool(ply, Ent1, "ballsocket_adv") and
+			WireLib.CanTool(ply, Ent2, "ballsocket_adv")
+		then
 			self:AddClutch( Ent1, Ent2 )
 		end
 	end

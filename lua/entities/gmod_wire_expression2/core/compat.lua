@@ -1,9 +1,7 @@
 -- Functions in this file are retained purely for backwards-compatibility. They should not be used in new code and might be removed at any time.
 
 e2function string number:teamName()
-	local str = team.GetName(this)
-	if not str then return "" end
-	return str
+	return team.GetName(this) or ""
 end
 
 e2function number number:teamScore()
@@ -28,18 +26,24 @@ end
 
 __e2setcost(30) -- temporary
 
+local clamp = WireLib.clampForce
+
 e2function void applyForce(vector force)
+	force = clamp(force)
 	local phys = self.entity:GetPhysicsObject()
-	phys:ApplyForceCenter(Vector(force[1],force[2],force[3]))
+	phys:ApplyForceCenter(force)
 end
 
 e2function void applyOffsetForce(vector force, vector position)
+	force 		= clamp(force)
+	position 	= clamp(position)
 	local phys = self.entity:GetPhysicsObject()
 	phys:ApplyForceOffset(Vector(force[1],force[2],force[3]), Vector(position[1],position[2],position[3]))
 end
 
 e2function void applyAngForce(angle angForce)
 	if angForce[1] == 0 and angForce[2] == 0 and angForce[3] == 0 then return end
+	angForce = clamp(angForce)
 
 	local ent = self.entity
 	local phys = ent:GetPhysicsObject()
@@ -73,6 +77,7 @@ end
 
 e2function void applyTorque(vector torque)
 	if torque[1] == 0 and torque[2] == 0 and torque[3] == 0 then return end
+	torque = clamp(torque)
 
 	local phys = self.entity:GetPhysicsObject()
 
@@ -93,6 +98,9 @@ e2function void applyTorque(vector torque)
 
 	local dir = ( tq:Cross(off) ):GetNormal()
 
+	dir = clamp(dir)
+	off = clamp(off)
+
 	phys:ApplyForceOffset( dir, off )
 	phys:ApplyForceOffset( dir * -1, off * -1 )
 end
@@ -110,6 +118,6 @@ e2function number entity:height()
 	]]
 
 	-- New code (Same as E:boxSize():z())
-	if(!IsValid(this)) then return 0 end
+	if not IsValid(this) then return self:throw("Invalid entity!", 0) end
 	return (this:OBBMaxs() - this:OBBMins()).z
 end

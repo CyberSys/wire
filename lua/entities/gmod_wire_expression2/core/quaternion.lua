@@ -22,10 +22,7 @@ local rad2deg = 180/math.pi
 registerType("quaternion", "q", { 0, 0, 0, 0 },
 	nil,
 	nil,
-	function(retval)
-		if !istable(retval) then error("Return value is not a table, but a "..type(retval).."!",0) end
-		if #retval ~= 4 then error("Return value does not have exactly 4 entries!",0) end
-	end,
+	nil,
 	function(v)
 		return !istable(v) or #v ~= 4
 	end
@@ -45,19 +42,19 @@ local function format(value)
 	dbginfo = r
 	if abs(value[2]) > 0.0005 then
 		i = tostring(Round(value[2]*1000)/1000)
-		if string.sub(i,1,1)!="-" and dbginfo != "" then i = "+"..i end
+		if string.sub(i,1,1)~="-" and dbginfo ~= "" then i = "+"..i end
 		i = i .. "i"
 	end
 	dbginfo = dbginfo .. i
 	if abs(value[3]) > 0.0005 then
 		j = tostring(Round(value[3]*1000)/1000)
-		if string.sub(j,1,1)!="-" and dbginfo != "" then j = "+"..j end
+		if string.sub(j,1,1)~="-" and dbginfo ~= "" then j = "+"..j end
 		j = j .. "j"
 	end
 	dbginfo = dbginfo .. j
 	if abs(value[4]) > 0.0005 then
 		k = tostring(Round(value[4]*1000)/1000)
-		if string.sub(k,1,1)!="-" and dbginfo != "" then k = "+"..k end
+		if string.sub(k,1,1)~="-" and dbginfo ~= "" then k = "+"..k end
 		k = k .. "k"
 	end
 	dbginfo = dbginfo .. k
@@ -98,11 +95,28 @@ local function qlog(q)
 	local u = { q[1]/l, q[2]/l, q[3]/l, q[4]/l }
 	local a = acos(u[1])
 	local m = sqrt(u[2]*u[2] + u[3]*u[3] + u[4]*u[4])
-	if abs(m) > delta then
+	if abs(m) > 0 then
 		return { log(l), a*u[2]/m, a*u[3]/m, a*u[4]/m }
 	else
 		return { log(l), 0, 0, 0 }  --when m is 0, u[2], u[3] and u[4] are 0 too
 	end
+end
+
+local function qDot(q1, q2)
+	return q1[1]*q2[1] + q1[2]*q2[2] + q1[3]*q2[3] + q1[4]*q2[4]
+end
+
+local function qGetNormalized(q)
+	local len = sqrt(q[1]^2 + q[2]^2 + q[3]^2 + q[4]^2)
+	return {q[1]/len, q[2]/len, q[3]/len, q[4]/len}
+end
+
+local function qNormalize(q)
+	local len = sqrt(q[1]^2 + q[2]^2 + q[3]^2 + q[4]^2)
+	q[1] = q[1]/len
+	q[2] = q[2]/len
+	q[3] = q[3]/len
+	q[4] = q[4]/len
 end
 
 /******************************************************************************/
@@ -229,15 +243,6 @@ end
 /******************************************************************************/
 
 __e2setcost(2)
-
-registerOperator("ass", "q", "q", function(self, args)
-	local lhs, op2, scope = args[2], args[3], args[4]
-	local      rhs = op2[1](self, op2)
-
-	self.Scopes[scope][lhs] = rhs
-	self.Scopes[scope].vclk[lhs] = true
-	return rhs
-end)
 
 /******************************************************************************/
 // TODO: define division as multiplication with (1/x), or is it not useful?
@@ -426,38 +431,23 @@ e2function quaternion operator^(quaternion lhs, number rhs)
 	return qexp({ l[1]*rhs, l[2]*rhs, l[3]*rhs, l[4]*rhs })
 end
 
+registerOperator("indexget", "qn", "n", function(state, this, index)
+	return this[math.Round(math.Clamp(index, 1, 4))]
+end)
 
-e2function number quaternion:operator[](index)
-	index = math.Round(math.Clamp(index,1,4))
-	return this[index]
-end
-
-e2function number quaternion:operator[](index, value)
-	index = math.Round(math.Clamp(index,1,4))
-	this[index] = value
-	return value
-end
-
-/******************************************************************************/
+registerOperator("indexset", "qnn", "", function(state, this, index, value)
+	this[math.Round(math.Clamp(index, 1, 4))] = value
+	state.GlobalScope.vclk[this] = true
+end)
 
 __e2setcost(6)
 
 e2function number operator==(quaternion lhs, quaternion rhs)
-	local rvd1, rvd2, rvd3, rvd4 = lhs[1] - rhs[1], lhs[2] - rhs[2], lhs[3] - rhs[3], lhs[4] - rhs[4]
-	if rvd1 <= delta && rvd1 >= -delta &&
-	   rvd2 <= delta && rvd2 >= -delta &&
-	   rvd3 <= delta && rvd3 >= -delta &&
-	   rvd4 <= delta && rvd4 >= -delta
-	   then return 1 else return 0 end
-end
-
-e2function number operator!=(quaternion lhs, quaternion rhs)
-	local rvd1, rvd2, rvd3, rvd4 = lhs[1] - rhs[1], lhs[2] - rhs[2], lhs[3] - rhs[3], lhs[4] - rhs[4]
-	if rvd1 > delta || rvd1 < -delta ||
-	   rvd2 > delta || rvd2 < -delta ||
-	   rvd3 > delta || rvd3 < -delta ||
-	   rvd4 > delta || rvd4 < -delta
-	   then return 1 else return 0 end
+	return (lhs[1] == rhs[1]
+		and lhs[2] == rhs[2]
+		and lhs[3] == rhs[3]
+		and lhs[4] == rhs[4])
+		and 1 or 0
 end
 
 /******************************************************************************/
@@ -527,33 +517,57 @@ end
 __e2setcost(13)
 
 --- Performs spherical linear interpolation between <q0> and <q1>. Returns <q0> for <t>=0, <q1> for <t>=1
+--- Derived from c++ source on https://en.wikipedia.org/wiki/Slerp
 e2function quaternion slerp(quaternion q0, quaternion q1, number t)
-	local dot = q0[1]*q1[1] + q0[2]*q1[2] + q0[3]*q1[3] + q0[4]*q1[4]
-	local q11
-	if dot<0 then
-		q11 = {-q1[1], -q1[2], -q1[3], -q1[4]}
-	else
-		q11 = { q1[1], q1[2], q1[3], q1[4] }  -- dunno if just q11 = q1 works
+	local dot = qDot(q0, q1)
+
+	if dot < 0 then
+		q1 = {-q1[1], -q1[2], -q1[3], -q1[4]}
+		dot = -dot
 	end
 
-	local l = q0[1]*q0[1] + q0[2]*q0[2] + q0[3]*q0[3] + q0[4]*q0[4]
-	if l==0 then return { 0, 0, 0, 0 } end
-	local invq0 = { q0[1]/l, -q0[2]/l, -q0[3]/l, -q0[4]/l }
-	local logq = qlog(qmul(invq0,q11))
-	local q = qexp( { logq[1]*t, logq[2]*t, logq[3]*t, logq[4]*t } )
-	return qmul(q0,q)
+	-- Really small theta, transcendental functions approximate to linear
+	if dot > 0.9995 then
+		local lerped = {
+			q0[1] + t*(q1[1] - q0[1]),
+			q0[2] + t*(q1[2] - q0[2]),
+			q0[3] + t*(q1[3] - q0[3]),
+			q0[4] + t*(q1[4] - q0[4]),
+		}
+		qNormalize(lerped)
+		return lerped
+	end
+
+	local theta_0 = acos(dot)
+	local theta = theta_0*t
+	local sin_theta = sin(theta)
+	local sin_theta_0 = sin(theta_0)
+
+	local s0 = cos(theta) - dot * sin_theta / sin_theta_0
+	local s1 = sin_theta / sin_theta_0
+
+	local slerped = {
+		q0[1]*s0 + q1[1]*s1,
+		q0[2]*s0 + q1[2]*s1,
+		q0[3]*s0 + q1[3]*s1,
+		q0[4]*s0 + q1[4]*s1,
+	}
+	qNormalize(slerped)
+	return slerped
 end
 
--- Performs Linear interpolation between <q0> and <q1>. Returns <q0> for <t>=0, <q1> for <t>=1
-e2function quaternion lerp(quaternion q0, quaternion q1, number t, number reduceTo360)
-    local t1 = 1 - t
-    local dot = q0[1]*q1[1] + q0[2]*q1[2] + q0[3]*q1[3] + q0[4]*q1[4]
-    
-    if reduceTo360 and dot < 0 then
-        return ( qmul(q0, t1) + qmul(q1, -t) )
-    else
-        return ( qmul(q0, t1) + qmul(q1, t) )
-    end
+--- Performs normalized linear interpolation between <q0> and <q1>. Returns normalized <q0> for <t>=0, normalized <q1> for <t>=1
+e2function quaternion nlerp(quaternion q0, quaternion q1, number t)
+	local t1 = 1 - t
+	local q2
+	if qDot(q0, q1) < 0 then
+		q2 = { q0[1] * t1 - q1[1] * t, q0[2] * t1 - q1[2] * t, q0[3] * t1 - q1[3] * t, q0[4] * t1 - q1[4] * t }
+	else
+		q2 = { q0[1] * t1 + q1[1] * t, q0[2] * t1 + q1[2] * t, q0[3] * t1 + q1[3] * t, q0[4] * t1 + q1[4] * t }
+	end
+
+	qNormalize(q2)
+	return q2
 end
 
 /******************************************************************************/
@@ -563,33 +577,33 @@ __e2setcost(7)
 e2function vector quaternion:forward()
 	local this1, this2, this3, this4 = this[1], this[2], this[3], this[4]
 	local t2, t3, t4 = this2 * 2, this3 * 2, this4 * 2
-	return {
+	return Vector(
 		this1 * this1 + this2 * this2 - this3 * this3 - this4 * this4,
 		t3 * this2 + t4 * this1,
 		t4 * this2 - t3 * this1
-	}
+	)
 end
 
 --- Returns vector pointing right for <this>
 e2function vector quaternion:right()
 	local this1, this2, this3, this4 = this[1], this[2], this[3], this[4]
 	local t2, t3, t4 = this2 * 2, this3 * 2, this4 * 2
-	return {
+	return Vector(
 		t4 * this1 - t2 * this3,
 		this2 * this2 - this1 * this1 + this4 * this4 - this3 * this3,
 		- t2 * this1 - t3 * this4
-	}
+	)
 end
 
 --- Returns vector pointing up for <this>
 e2function vector quaternion:up()
 	local this1, this2, this3, this4 = this[1], this[2], this[3], this[4]
 	local t2, t3, t4 = this2 * 2, this3 * 2, this4 * 2
-	return {
+	return Vector(
 		t3 * this1 + t2 * this4,
 		t3 * this4 - t2 * this1,
 		this1 * this1 - this2 * this2 - this3 * this3 + this4 * this4
-	}
+	)
 end
 
 /******************************************************************************/
@@ -627,20 +641,20 @@ end
 --- Returns the axis of rotation (by coder0xff)
 e2function vector rotationAxis(quaternion q)
 	local m2 = q[2] * q[2] + q[3] * q[3] + q[4] * q[4]
-	if m2 == 0 then return { 0, 0, 1 } end
+	if m2 == 0 then return Vector(0, 0, 1) end
 	local m = sqrt(m2)
-	return { q[2] / m, q[3] / m, q[4] / m}
+	return Vector(q[2] / m, q[3] / m, q[4] / m)
 end
 
 --- Returns the rotation vector - rotation axis where magnitude is the angle of rotation in degress (by coder0xff)
 e2function vector rotationVector(quaternion q)
 	local l2 = q[1]*q[1] + q[2]*q[2] + q[3]*q[3] + q[4]*q[4]
 	local m2 = math.max( q[2]*q[2] + q[3]*q[3] + q[4]*q[4], 0 )
-	if l2 == 0 or m2 == 0 then return { 0, 0, 0 } end
+	if l2 == 0 or m2 == 0 then return Vector(0, 0, 0) end
 	local s = 2 * acos( math.Clamp( q[1] / sqrt(l2), -1, 1 ) ) * rad2deg
 	if s > 180 then s = s - 360 end
 	s = s / sqrt(m2)
-	return { q[2] * s, q[3] * s, q[4] * s }
+	return Vector( q[2] * s, q[3] * s, q[4] * s )
 end
 
 /******************************************************************************/
@@ -648,7 +662,7 @@ __e2setcost(3)
 
 --- Converts <q> to a vector by dropping the real component
 e2function vector vec(quaternion q)
-	return { q[2], q[3], q[4] }
+	return Vector(q[2], q[3], q[4])
 end
 
 __e2setcost(15)
@@ -666,7 +680,7 @@ end
 --- Returns angle represented by <this>
 e2function angle quaternion:toAngle()
 	local l = sqrt(this[1]*this[1]+this[2]*this[2]+this[3]*this[3]+this[4]*this[4])
-	if l == 0 then return {0,0,0} end
+	if l == 0 then return Angle(0, 0, 0) end
 	local q1, q2, q3, q4 = this[1]/l, this[2]/l, this[3]/l, this[4]/l
 
 	local x = Vector(q1*q1 + q2*q2 - q3*q3 - q4*q4,
@@ -689,7 +703,17 @@ e2function angle quaternion:toAngle()
 	local dot = q2*q1 + q3*q4
 	if dot < 0 then roll = -roll end
 
-	return {ang.p, ang.y, roll}
+	return Angle(ang.p, ang.y, roll)
+end
+
+--- Returns new normalized quaternion
+e2function quaternion quaternion:normalized()
+	return qGetNormalized(this)
+end
+
+--- Returns dot product of two quaternion
+e2function number quaternion:dot(quaternion q1)
+	return qDot(this, q1)
 end
 
 /******************************************************************************/

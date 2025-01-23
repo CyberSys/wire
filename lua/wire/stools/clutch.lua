@@ -2,11 +2,14 @@ WireToolSetup.setCategory( "Physics" )
 WireToolSetup.open( "clutch", "Clutch", "gmod_wire_clutch", nil, "Clutchs" )
 
 if CLIENT then
-    language.Add( "Tool.wire_clutch.name", "Clutch Tool (Wire)" )
-    language.Add( "Tool.wire_clutch.desc", "Control rotational friction between props" )
-    language.Add( "Tool.wire_clutch.0", "Primary: Place/Select a clutch controller\nSecondary: Select an entity to apply the clutch to\nReload: Remove clutch from entity/deselect controller" )
-    language.Add( "Tool.wire_clutch.1", "Right click on the second entity you want the clutch to apply to" )
-	language.Add( "undone_wireclutch", "Undone Wire Clutch" )
+	language.Add( "Tool.wire_clutch.name", "Clutch Tool (Wire)" )
+	language.Add( "Tool.wire_clutch.desc", "Control rotational friction between props" )
+	TOOL.Information = {
+		{ name = "left_0", stage = 0, text = "Place/Select a clutch controller" },
+		{ name = "right_0", stage = 0, text = "Select an entity to apply the clutch to" },
+		{ name = "reload_0", stage = 0, text = "Remove clutch from entity/deselect controller" },
+		{ name = "right_1", stage = 1, text = "Right click on the second entity you want the clutch to apply to" },
+	}
 end
 WireToolSetup.BaseLang()
 WireToolSetup.SetupMax( 8 )
@@ -49,7 +52,7 @@ end
 if CLIENT then
 	local Linked_Ents = {}		-- Table of constrained ents, with Ent1 as k and Ent2 as v
 	local Unique_Ents = {}		-- Table of entities as keys
-	
+
 	// Receive stage 0 info
 	local function Receive_links( um )
 		table.Empty( Linked_Ents )
@@ -106,8 +109,8 @@ if CLIENT then
 	function TOOL:DrawHUD()
 		local DrawnEnts = {}	-- Used to keep track of which ents already have a circle
 
-		local controller = self:GetWeapon():GetNetworkedEntity( "WireClutchController" )
-		if !IsValid( controller ) then return end
+		local controller = self:GetWeapon():GetNWEntity( "WireClutchController" )
+		if not IsValid( controller ) then return end
 
 		// Draw circle around the controller
 		local viewpos = LocalPlayer():GetViewModel():GetPos()
@@ -131,7 +134,7 @@ if CLIENT then
 				if IsValid1 then pos1 = v.Ent1:GetPos():ToScreen() end
 				if IsValid2 then pos2 = v.Ent2:GetPos():ToScreen() end
 
-				if !IsValid1 and !IsValid2 then
+				if not IsValid1 and not IsValid2 then
 					table.remove( Linked_Ents, k )
 				elseif v.Ent1:IsWorld() then
 					basepos = v.Ent2:GetPos() + Vector(0, 0, -30)
@@ -145,12 +148,12 @@ if CLIENT then
 					if InView( pos1 ) and InView( pos2 ) then
 						surface.DrawLine( pos1.x, pos1.y, pos2.x, pos2.y )
 
-						if !DrawnEnts[v.Ent1] and IsValid1 then
+						if not DrawnEnts[v.Ent1] and IsValid1 then
 							surface.DrawCircle( pos1.x, pos1.y, 5, Color(100, 255, 100, 255 ) )
 							DrawnEnts[v.Ent1] = true
 						end
 
-						if !DrawnEnts[v.Ent2] and IsValid2 then
+						if not DrawnEnts[v.Ent2] and IsValid2 then
 							surface.DrawCircle( pos2.x, pos2.y, 5, Color(100, 255, 100, 255 ) )
 							DrawnEnts[v.Ent2] = true
 						end
@@ -169,7 +172,7 @@ end
 if SERVER then
 	function TOOL:SelectController( controller )
 		self.controller = controller
-		self:GetWeapon():SetNetworkedEntity( "WireClutchController", controller or Entity(0) ) -- Must use null entity since nil won't send
+		self:GetWeapon():SetNWEntity( "WireClutchController", controller or Entity(0) ) -- Must use null entity since nil won't send
 
 		// Send constraint from the controller to the client
 		local constrained_pairs = {}
@@ -199,12 +202,12 @@ function TOOL:RightClick( trace )
 	local ply = self:GetOwner()
 	local stage = self:NumObjects()
 
-	if !IsValid( self.controller ) then
+	if not IsValid( self.controller ) then
 		ply:PrintMessage( HUD_PRINTTALK, "Select a clutch controller with left click first" )
 		return
 	end
 
-	if ( !IsValid( trace.Entity ) and !trace.Entity:IsWorld() ) or trace.Entity:IsPlayer() then return end
+	if ( not IsValid( trace.Entity ) and not trace.Entity:IsWorld() ) or trace.Entity:IsPlayer() then return end
 
 	// First click: select the first entity
 	if stage == 0 then
@@ -307,22 +310,3 @@ end
 
 
 if CLIENT then return end
-/*---------------------------------------------------------
-   -- Clutch controller server functions --
----------------------------------------------------------*/
-// When a ball socket is removed, clear the entry for each clutch controller
-local function OnBallSocketRemoved( const )
-	if const.Type and const.Type == "" and const:GetClass() == "phys_ragdollconstraint" then
-		for k, v in pairs( ents.FindByClass("gmod_wire_clutch") ) do
-			if v.clutch_ballsockets[const] then
-				v.clutch_ballsockets[const] = nil
-				v:UpdateOverlay()
-			end
-		end
-	end
-end
-
-hook.Add( "EntityRemoved", "wire_clutch_ballsocket_removed", function( ent )
-	local r, e = xpcall( OnBallSocketRemoved, debug.traceback, ent )
-	if !r then WireLib.ErrorNoHalt( e .. "\n" ) end
-end )

@@ -53,8 +53,8 @@ function ENT:Initialize()
 end
 
 function ENT:SendPixel()
-  if (self.Memory[2047] ~= 0) && (self.CharX >= 0) && (self.CharX < 30) &&
-                                 (self.CharY >= 0) && (self.CharY < 18) then
+  if (self.Memory[2047] ~= 0) and (self.CharX >= 0) and (self.CharX < 30) and
+                                 (self.CharY >= 0) and (self.CharY < 18) then
     local pixelno = math.floor(self.CharY)*30+math.floor(self.CharX)
 
     self:WriteCell(pixelno*2, self.Char)
@@ -63,6 +63,7 @@ function ENT:SendPixel()
 end
 
 function ENT:ReadCell(Address)
+  Address = math.floor(Address)
   if Address < 0 then return nil end
   if Address >= 2048 then return nil end
   if Address == 2022 then return WireGPU_Monitors[self:GetModel()].RatioX end
@@ -71,6 +72,7 @@ function ENT:ReadCell(Address)
 end
 
 function ENT:WriteCell(Address, value)
+  Address = math.floor(Address)
   if Address < 0 then return false end
   if Address >= 2048 then return false end
   if Address < 2000 then -- text/attribute data

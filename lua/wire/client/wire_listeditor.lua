@@ -38,7 +38,7 @@ local invalid_chars = {
 
 local function ConnectPathes(path1, path2)
 	local path = ""
-	
+
 	if (isstring(path1) and path1 ~= "") then
 		path = path1
 		if (isstring(path2) and path2 ~= "") then
@@ -55,7 +55,7 @@ end
 
 //Parse the lines from a given file object
 local function ReadLine(filedata)
-	if (!filedata) then return end
+	if (not filedata) then return end
 
 	local fileline = ""
 	local comment = false
@@ -65,9 +65,9 @@ local function ReadLine(filedata)
 		local line = ""
 		local fileend = false
 
-		for i=1, max_char_count+56 do // maximum chars per line 
+		for i=1, max_char_count+56 do // maximum chars per line
 			local byte = filedata:ReadByte()
-			fileend = !byte
+			fileend = not byte
 
 			if (fileend) then break end // file end
 			local char = string.char(byte)
@@ -81,7 +81,7 @@ local function ReadLine(filedata)
 		end
 		line = string.Trim(line)
 
-		if (!fileend and line == "") then continue end
+		if (not fileend and line == "") then continue end
 		fileline = line
 
 		break
@@ -112,7 +112,7 @@ local function fileName(filepath)
 end
 
 local function SaveTo(self, func, ...)
-	if (!IsValid(self)) then return end
+	if (not IsValid(self)) then return end
 	local args = {...}
 
 	local path = self.FileBrowser:GetFileName() or self.m_strList or ""
@@ -123,13 +123,13 @@ local function SaveTo(self, func, ...)
 		string.sub(fileName(path), 0, -5), // remove .txt at the end
 
 		function( strTextOut )
-			if (!IsValid(self)) then return end
+			if (not IsValid(self)) then return end
 
 			strTextOut = string.gsub(strTextOut, ".", invalid_filename_chars)
 			if (strTextOut == "") then return end
-			
+
 			local filepath = string.GetPathFromFilename(path)
-			if (!filepath or filepath == "") then filepath = self.m_strRootPath.."/" end
+			if (not filepath or filepath == "") then filepath = self.m_strRootPath.."/" end
 
 			local saved = self:SaveList(filepath..strTextOut..".txt")
 			if (saved and func) then
@@ -142,12 +142,12 @@ end
 
 //Ask for override: Opens a confirmation if the file name is different box.
 local function AsForOverride(self, func, filename, ...)
-	if (!IsValid(self)) then return end
+	if (not IsValid(self)) then return end
 
-	if (!func) then return end
+	if (not func) then return end
 	if (filename == self.m_strList) then func(self, filename, ...) return end
-	if (!file.Exists(filename, "DATA")) then func(self, filename, ...) return end
-	
+	if (not file.Exists(filename, "DATA")) then func(self, filename, ...) return end
+
 	local args = {...}
 
 	Derma_Query(
@@ -156,8 +156,8 @@ local function AsForOverride(self, func, filename, ...)
 		"Overwrite",
 
 		function()
-			if (!IsValid(self)) then return end
-			
+			if (not IsValid(self)) then return end
+
 			func(self, filename, unpack(args))
 		end,
 
@@ -167,11 +167,11 @@ end
 
 //Ask for save: Opens a confirmation box.
 local function AsForSave(self, func, ...)
-	if (!IsValid(self)) then return end
+	if (not IsValid(self)) then return end
 
-	if (!func) then return end
-	if (!self.m_bUnsaved) then func(self, ...) return end
-	
+	if (not func) then return end
+	if (not self.m_bUnsaved) then func(self, ...) return end
+
 	local args = {...}
 
 	Derma_Query( "Would you like to save the changes?",
@@ -179,24 +179,24 @@ local function AsForSave(self, func, ...)
 
 		"Yes", // Save and resume.
 		function()
-			if (!IsValid(self)) then return end
+			if (not IsValid(self)) then return end
 
-			if (!self.m_strList or self.m_strList == "") then
+			if (not self.m_strList or self.m_strList == "") then
 				SaveTo(self, func, unpack(args))
 				return
 			end
-			
+
 			local saved = self:SaveList(self.m_strList)
 			if (saved) then
 				func(self, unpack(args))
 			end
-		end, 
+		end,
 
 		"No", // Don't save and resume.
 		function()
-			if (!IsValid(self)) then return end
+			if (not IsValid(self)) then return end
 			func(self, unpack(args))
-		end, 
+		end,
 
 		"Cancel" // Do nothing.
 	)
@@ -287,7 +287,7 @@ function PANEL:Init()
 	self.SaveIcon:SetStretchToFit(false)
 	self.SaveIcon:DockMargin(0, 0, 0, 0)
 	self.SaveIcon.DoClick = function()
-		if (!self.m_strList or self.m_strList == "") then
+		if (not self.m_strList or self.m_strList == "") then
 			SaveTo(self)
 			return
 		end
@@ -343,7 +343,7 @@ function PANEL:Init()
 	self.SplitPanel:SetLeftMin(150)
 	self.SplitPanel:SetRightMin(300)
 	self.SplitPanel:SetDividerWidth(3)
-	
+
 	self:SetRootPath("wirelists")
 end
 
@@ -363,7 +363,7 @@ function PANEL:PerformLayout()
 end
 
 function PANEL:UpdateListNameLabel()
-	if (!IsValid(self.ListNameLabel)) then return end
+	if (not IsValid(self.ListNameLabel)) then return end
 
 	self.ListNameLabel:SetText((self.m_bUnsaved and "*" or "")..(self.m_strList or ""))
 end
@@ -382,7 +382,7 @@ function PANEL:ClearList()
 end
 
 function PANEL:Setup()
-	if (!self.m_strRootPath) then return false end
+	if (not self.m_strRootPath) then return false end
 	self.m_strSelectedList = nil
 	self.m_strFile = nil
 
@@ -405,7 +405,7 @@ function PANEL:Think()
 		self:InvalidateLayout()
 	end
 
-	if ( !self.bSetup ) then
+	if ( not self.bSetup ) then
 		self.bSetup = self:Setup()
 	end
 end
@@ -414,7 +414,7 @@ function PANEL:AddItem(...)
 	local itemtable = {...}
 	local item = itemtable[1]
 
-	if (!isstring(item) or item == "") then return end
+	if (not isstring(item) or item == "") then return end
 	if (self.TabfileCount > self.m_nMaxItems) then return end
 	if (#item > max_char_count) then return end
 	if (self.Tabfile[item]) then return end
@@ -424,7 +424,7 @@ function PANEL:AddItem(...)
 
 	for k, v in ipairs(itemtable) do
 		if (k == 1) then continue end
-	
+
 		i = i + 1
 		itemargs[i] = v
 	end
@@ -445,16 +445,16 @@ function PANEL:AddItem(...)
 end
 
 function PANEL:ItemInList(item)
-	if (!item) then return false end
+	if (not item) then return false end
 	if (self.Tabfile[item]) then return true end
 
 	return false
 end
 
 function PANEL:RemoveItem(item)
-	if (!item) then return end
-	if (!self.Tabfile[item]) then return end
-	if (!self.Files.Lines) then return end
+	if (not item) then return end
+	if (not self.Tabfile[item]) then return end
+	if (not self.Files.Lines) then return end
 
 	for k, v in ipairs(self.Files.Lines) do
 		if (v.m_strFilename == item) then
@@ -469,30 +469,30 @@ function PANEL:RemoveItem(item)
 end
 
 function PANEL:OpenList(strfile)
-	if (!strfile) then return end
+	if (not strfile) then return end
 	if (strfile == "") then return end
 
 	AsForSave(self, function(self, strfile)
-		local filedata = file.Open(strfile, "rb", "DATA") 
-		if (!filedata) then return end
-		
+		local filedata = file.Open(strfile, "rb", "DATA")
+		if (not filedata) then return end
+
 		WireLib.TimedpairsStop(self.TimedpairsName)
 		self.Files:Clear(true)
 		self.Tabfile = {}
 		self.TabfileCount = 0
-		
+
 		local counttab={}
 		for i=1, self.m_nMaxItems do
 			counttab[i] = true
 		end
-		
+
 		WireLib.Timedpairs(self.TimedpairsName, counttab, self.m_nListSpeed, function(index, _, self, filedata)
-			if (!IsValid(self)) then
+			if (not IsValid(self)) then
 				filedata:Close()
 				return false
 			end
 
-			if (!IsValid(self.Files)) then
+			if (not IsValid(self.Files)) then
 				filedata:Close()
 				return false
 			end
@@ -500,15 +500,15 @@ function PANEL:OpenList(strfile)
 			if (self.TabfileCount >= self.m_nMaxItems) then
 				filedata:Close()
 				self:SetUnsaved(false)
-				
+
 				return false
 			end
 
 			local linetable = ReadLine(filedata)
-			if (!linetable) then // do not add to empty lines
+			if (not linetable) then // do not add to empty lines
 				filedata:Close()
 				self:SetUnsaved(false)
-				
+
 				return false
 			end
 
@@ -517,23 +517,23 @@ function PANEL:OpenList(strfile)
 		end, function(index, _, self, filedata)
 			filedata:Close()
 
-			if (!IsValid(self)) then return end
+			if (not IsValid(self)) then return end
 			self:SetUnsaved(false)
 		end, self, filedata)
-		
+
 		self:SetUnsaved(false)
 		self:SetList(strfile)
 	end, strfile)
 end
 
 function PANEL:SaveList(strfile)
-	if (!self.Tabfile) then return end
-	if (!strfile) then return end
+	if (not self.Tabfile) then return end
+	if (not strfile) then return end
 	if (strfile == "") then return end
 
 	AsForOverride(self, function(self, strfile)
 		local filedata = file.Open(strfile, "w", "DATA")
-		if (!filedata) then
+		if (not filedata) then
 			Derma_Query( "File could not be saved!",
 				"Error!",
 				"OK"
@@ -567,13 +567,13 @@ end
 
 function PANEL:SetUnsaved(bool)
 	self.m_bUnsaved = bool
-	
+
 	self:UpdateListNameLabel()
 end
 
 function PANEL:SetList(listfile)
 	self.m_strList = listfile
-	
+
 	self:UpdateListNameLabel()
 end
 

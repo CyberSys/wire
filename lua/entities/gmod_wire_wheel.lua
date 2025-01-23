@@ -5,6 +5,10 @@ ENT.WireDebugName	= "Wheel"
 
 if CLIENT then return end -- No more client
 
+-- As motor constraints can't have their initial torque updated,
+-- we always create it with 1000 initial torque (needs to be > friction) and then Scale it with a multiplier
+local WHEEL_BASE_TORQUE = 1000
+
 function ENT:Initialize()
 	self:PhysicsInit( SOLID_VPHYSICS )
 	self:SetMoveType( MOVETYPE_VPHYSICS )
@@ -12,7 +16,6 @@ function ENT:Initialize()
 	self:SetUseType( SIMPLE_USE )
 
 	self.BaseTorque = 1
-	self.TorqueScale = 1
 	self.Breaking = 0
 	self.SpeedMod = 0
 	self.Go = 0
@@ -24,33 +27,25 @@ function ENT:Setup(fwd, bck, stop, torque, direction, axis)
 	self.fwd = fwd
 	self.bck = bck
 	self.stop = stop
-	if self.BaseTorque == 1 then self.BaseTorque = math.max(1, torque)
-	else self:SetTorque(torque)
-	end
 	if direction then self:SetDirection( direction ) end
+	if torque then self:SetTorque(math.max(1, torque)) end
 	if axis then self.Axis = axis end
-	
+
 	self:UpdateOverlayText()
 end
 
---[[---------------------------------------------------------
-   Sets the base torque
----------------------------------------------------------]]
 function ENT:UpdateOverlayText(speed)
 	local motor = self:GetMotor()
 	local friction = 0
-	if IsValid(motor) then friction = motor.friction end
-	self:SetOverlayText( 
-		"Torque: " .. math.floor( self.TorqueScale * self.BaseTorque ) .. 
-		"\nFriction: " .. friction .. 
-		"\nSpeed: " .. (speed or 0) .. 
-		"\nBreak: " .. self.Breaking .. 
+	if motor then friction = motor.friction end
+	self:SetOverlayText(
+		"Torque: " .. math.floor( self.BaseTorque ) ..
+		"\nFriction: " .. friction ..
+		"\nSpeed: " .. (speed or 0) ..
+		"\nBreak: " .. self.Breaking ..
 		"\nSpeedMod: " .. math.floor( self.SpeedMod * 100 ) .. "%" )
 end
 
---[[---------------------------------------------------------
-   Sets the axis (world space)
----------------------------------------------------------]]
 function ENT:SetAxis( vec )
 	self.Axis = self:GetPos() + vec * 512
 	self.Axis = self:NearestPoint( self.Axis )
@@ -67,61 +62,48 @@ function ENT:SetMotor( Motor )
 end
 
 function ENT:GetMotor()
-	if (!self.Motor) then
-		self.Motor = constraint.FindConstraintEntity( self, "Motor" )
-		if (!self.Motor or !self.Motor:IsValid()) then
-			self.Motor = nil
-		end
+	if IsValid(self.Motor) then return self.Motor end
+	local motor = constraint.FindConstraintEntity( self, "Motor" )
+	if IsValid(motor) then
+		self.Motor = motor
+		return motor
 	end
-	return self.Motor
+	return nil
 end
 
 function ENT:SetDirection( dir )
-	self:SetNetworkedInt( 1, dir )
+	self:SetNWInt( 1, dir )
 	self.direction = dir
 end
 
-
---[[---------------------------------------------------------
-   Forward
----------------------------------------------------------]]
-function ENT:Forward( mul )
-	if ( !self:IsValid() ) then return false end
+function ENT:UpdateMotor()
+	if not self:IsValid() then return false end
 	local Motor = self:GetMotor()
-	if ( Motor and !Motor:IsValid() ) then
-		Msg("Wheel doesn't have a motor!\n");
-		return false
-	elseif ( !Motor ) then return false
-	end
+	if not Motor then return false end
 
-	mul = mul or 1
-	local mdir = Motor.direction
-	local Speed = mdir * mul * self.TorqueScale * (1 + self.SpeedMod)
-	
-	self:UpdateOverlayText(mdir * mul * (1 + self.SpeedMod))
+	local mul = self.Go
+	local mdir = self.direction
+	local Speed = mdir * mul * (self.BaseTorque / WHEEL_BASE_TORQUE) * (1 + self.SpeedMod)
+
+	self:UpdateOverlayText(mul ~= 0 and (mdir * mul * (1 + self.SpeedMod)) or 0)
 
 	Motor:Fire( "Scale", Speed, 0 )
-	Motor:GetTable().forcescale = Speed
 	Motor:Fire( "Activate", "" , 0 )
 
 	return true
 end
 
---[[---------------------------------------------------------
-   Name: TriggerInput
-   Desc: the inputs
----------------------------------------------------------]]
 function ENT:TriggerInput(iname, value)
 	if (iname == "A: Go") then
 		if ( value == self.fwd ) then self.Go = 1
 		elseif ( value == self.bck ) then self.Go = -1
-		elseif ( value == self.stop ) then self.Go =0 end
+		elseif ( value == self.stop ) then self.Go = 0 end
 	elseif (iname == "B: Break") then
 		self.Breaking = value
 	elseif (iname == "C: SpeedMod") then
 		self.SpeedMod = (value / 100)
 	end
-	self:Forward( self.Go )
+	self:UpdateMotor()
 end
 
 
@@ -147,18 +129,8 @@ function ENT:PhysicsUpdate( physobj )
 	physobj:SetVelocity(vel)
 end
 
-
-
---[[---------------------------------------------------------
-   Todo? Scale Motor:GetTable().direction?
----------------------------------------------------------]]
 function ENT:SetTorque( torque )
-	self.TorqueScale = torque / self.BaseTorque
-
-	local Motor = self:GetMotor()
-	if not IsValid(Motor) then return end
-	Motor:Fire( "Scale", Motor:GetTable().direction * Motor:GetTable().forcescale * self.TorqueScale , 0 )
-
+	self.BaseTorque = torque
 	self:UpdateOverlayText()
 end
 
@@ -166,13 +138,10 @@ end
    Creates the direction arrows on the wheel
 ---------------------------------------------------------]]
 function ENT:DoDirectionEffect()
-	local Motor = self:GetMotor()
-	if not IsValid(Motor) then return end
-
 	local effectdata = EffectData()
 		effectdata:SetOrigin( self.Axis )
 		effectdata:SetEntity( self )
-		effectdata:SetScale( Motor.direction )
+		effectdata:SetScale( self.direction )
 	util.Effect( "wheel_indicator", effectdata, true, true )
 end
 
@@ -184,14 +153,13 @@ function ENT:Use( activator, caller, type, value )
 	local Owner = self:GetPlayer()
 
 	if (Motor and (Owner == nil or Owner == activator)) then
-		if (Motor:GetTable().direction == 1) then
-			Motor:GetTable().direction = -1
+		if (self.direction == 1) then
+			self.direction = -1
 		else
-			Motor:GetTable().direction = 1
+			self.direction = 1
 		end
-
-		Motor:Fire( "Scale", Motor:GetTable().direction * Motor:GetTable().forcescale * self.TorqueScale, 0 )
-		self:SetDirection( Motor:GetTable().direction )
+		self:SetDirection( self.direction )
+		self:UpdateMotor()
 
 		self:DoDirectionEffect()
 	end
@@ -205,7 +173,7 @@ function ENT:SetWheelBase(Base)
 end
 
 function ENT:BuildDupeInfo()
-	local info = self.BaseClass.BuildDupeInfo(self) or {}
+	local info = BaseClass.BuildDupeInfo(self) or {}
 	if IsValid(self.Base) then
 		info.Base = self.Base:EntIndex()
 	end
@@ -213,10 +181,11 @@ function ENT:BuildDupeInfo()
 end
 
 function ENT:ApplyDupeInfo(ply, ent, info, GetEntByID)
-	self.BaseClass.ApplyDupeInfo(self, ply, ent, info, GetEntByID)
+	BaseClass.ApplyDupeInfo(self, ply, ent, info, GetEntByID)
 
 	local Base = GetEntByID(info.Base)
 	if IsValid(Base) then
 		self:SetWheelBase(Base)
 	end
+	self:UpdateOverlayText()
 end

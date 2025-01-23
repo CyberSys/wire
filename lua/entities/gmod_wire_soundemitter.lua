@@ -16,7 +16,6 @@ local DefaultSamples = {
 	"synth/tri.wav",
 	"synth/sine.wav"
 }
-for _, str in pairs(DefaultSamples) do util.PrecacheSound(str) end
 
 function ENT:Initialize()
 	self:PhysicsInit( SOLID_VPHYSICS )
@@ -24,13 +23,14 @@ function ENT:Initialize()
 	self:SetSolid( SOLID_VPHYSICS )
 
 	self.Inputs = WireLib.CreateInputs(self, { "A", "Toggle", "Volume", "Play", "Stop",
-		"PitchRelative", "Sample", "SampleName [STRING]" })
+		"PitchRelative", "Sample", "SampleName [STRING]", "Level" })
 	self.Outputs = WireLib.CreateOutputs(self, { "Duration", "Property Sound", "Properties [ARRAY]", "Memory" })
 
 	self.Samples = table.Copy(DefaultSamples)
 
 	self.Active = false
 	self.Volume = 100
+	self.Level = 80
 	self.Pitch = 100
 	self.sound = self.Samples[1]
 	-- self.sound is a string, self.SoundObj is a CSoundPatch
@@ -45,7 +45,7 @@ end
 function ENT:OnRemove()
 	hook.Remove("PlayerConnect", self:GetClass() .. self:EntIndex())
 	self:StopSounds()
-	self.BaseClass.OnRemove(self)
+	BaseClass.OnRemove(self)
 end
 
 --[[
@@ -54,8 +54,10 @@ end
 	1: volume
 	2: pitchrelative
 	3: duration
+	6: level
 ]]
 function ENT:ReadCell(address)
+	address = math.floor(address)
 	if address == 0 then
 		return self.Active and 1 or 0
 	elseif address == 1 then
@@ -64,6 +66,8 @@ function ENT:ReadCell(address)
 		return self.Pitch / 100
 	elseif address == 3 then
 		return self.Outputs.Duration.Value
+	elseif address == 6 then
+		return self.Level
 	end
 end
 
@@ -76,9 +80,11 @@ local cellsOut = {
 	[3] = "Sample",
 	[4] = "Play",
 	[5] = "Stop",
+	[6] = "Level",
 }
 
 function ENT:WriteCell(address, value)
+	address = math.floor(address)
 	if cellsOut[address] then
 		self:TriggerInput(cellsOut[address], value)
 		return true
@@ -112,6 +118,8 @@ function ENT:TriggerInput(iname, value)
 		self:StopSounds()
 	elseif iname == "Volume" then
 		self.Volume = math.Clamp(math.floor(value*100), 0.0, 100.0)
+	elseif iname == "Level" then
+		self.Level = math.Clamp(value, 55.0, 165.0)
 	elseif iname == "PitchRelative" then
 		self.Pitch = math.Clamp(math.floor(value*100), 0, 255)
 	elseif iname == "Sample" then
@@ -124,8 +132,17 @@ end
 
 function ENT:UpdateSound()
 	if self.NeedsRefresh or self.sound ~= self.ActiveSample then
+
 		self.NeedsRefresh = nil
-		self.SoundObj = CreateSound(self, self.sound)
+		local filter = RecipientFilter()
+		filter:AddAllPlayers()
+
+		if self.SoundObj then
+			self.SoundObj:Stop()
+			self.SoundObj = nil
+		end
+
+		self.SoundObj = CreateSound(self, self.sound, filter)
 		self.ActiveSample = self.sound
 
 		self.SoundProperties = sound.GetProperties(self.sound)
@@ -142,20 +159,20 @@ function ENT:UpdateSound()
 	end
 	self.SoundObj:ChangePitch(self.Pitch, 0)
 	self.SoundObj:ChangeVolume(self.Volume / 100.0, 0)
+	self.SoundObj:SetSoundLevel(self.Level)
 end
 
 function ENT:SetSound(soundName)
 	self:StopSounds()
 
-	if soundName:match('["?]') then return end
-	parsedsound = soundName:Trim()
-	util.PrecacheSound(parsedsound)
+	soundName = WireLib.SoundExists(soundName)
+	if not soundName then return end
 
-	self.sound = parsedsound
+	self.sound = soundName
 
-	self.SoundProperties = sound.GetProperties(self.sound)
+	self.SoundProperties = sound.GetProperties(soundName)
 	if self.SoundProperties then
-		WireLib.TriggerOutput(self, "Duration", SoundDuration(self.sound))
+		WireLib.TriggerOutput(self, "Duration", SoundDuration(soundName))
 		WireLib.TriggerOutput(self, "Property Sound", 1)
 		WireLib.TriggerOutput(self, "Properties", self.SoundProperties)
 	else
@@ -163,7 +180,7 @@ function ENT:SetSound(soundName)
 		WireLib.TriggerOutput(self, "Properties", {})
 	end
 
-	self:SetOverlayText( parsedsound:gsub("[/\\]+","/") )
+	self:SetOverlayText(soundName)
 end
 
 function ENT:StartSounds()

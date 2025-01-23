@@ -35,8 +35,7 @@ local function CheckWireDamageDetectors( ent, inflictor, attacker, amount, dmgin
 end
 hook.Add("EntityTakeDamage", "CheckWireDamageDetectors", function( ent, dmginfo )
 	if not next(Wire_Damage_Detectors) then return end
-	local r, e = xpcall( CheckWireDamageDetectors, debug.traceback, ent, dmginfo:GetInflictor(), dmginfo:GetAttacker(), dmginfo:GetDamage(), dmginfo )
-	if !r then print( "Wire damage detector error: " .. e ) end
+	CheckWireDamageDetectors( ent, dmginfo:GetInflictor(), dmginfo:GetAttacker(), dmginfo:GetDamage(), dmginfo )
 end)
 
 
@@ -46,20 +45,26 @@ function ENT:Initialize()
 	self:SetSolid( SOLID_VPHYSICS )
 
 	self.Outputs = WireLib.CreateSpecialOutputs(self, { "Clk", "Damage", "Attacker", "Victim", "Victims", "Position", "Force", "Type" } , { "NORMAL", "NORMAL", "ENTITY", "ENTITY", "TABLE", "VECTOR", "VECTOR", "STRING" } )
-	self.Inputs = WireLib.CreateSpecialInputs(self, { "On", "Entity", "Entities", "Reset" }, { "NORMAL", "ENTITY", "ARRAY", "NORMAL" } )
+	self.Inputs = WireLib.CreateInputs(self, {
+		"On",
+		"Entity (This entity will be added whenever this input changes to a valid entity) [ENTITY]",
+		"Entities (These entities will be added whenever this input changes.\nCan be changed at most once per second.) [ARRAY]",
+		"Reset"
+	})
 
 	self.on = false
 	self.updated = false -- Tracks whether constraints were updated that tick
 	self.hit = false -- Tracks whether detector registered any damage that tick
 
 	self.firsthit_dmginfo = {} -- Stores damage info representing damage during an interval
-	
+
 	self.linked_entities = {} -- numerical array
 	self.linked_entities_lookup = {} -- lookup table indexed by entities
-	
+
 	self:LinkEnt( self )
 
 	self.count = 0
+	self.key_ents = {}
 
 	-- Store output damage info
 	self.victims = table.Copy(DEFAULT)
@@ -84,26 +89,12 @@ end
 
 -- Update overlay
 function ENT:ShowOutput()
-	local text
-	if self.includeconstrained == 0 then
-		text = "(Individual Props)\n"
-	else
-		text = "(Constrained Props)\n"
-	end
-
-	if #self.linked_entities == 0 then
-		text = text .. "Not linked"
-	else
-		if #self.linked_entities == 1 and self.linked_entities[1] == self then
-			text = text .. "Linked to self"
-		else
-			text = text .. "Linked to " .. #self.linked_entities .. " entities."
-		end
-	end
-	
-	self:SetOverlayText( text )
-
-	self:SetOverlayText(text)
+	local num = #self.linked_entities
+	self:SetOverlayText(string.format("(%s)\nLinked to %s entities%s",
+		(self.includeconstrained == 0) and "Individual Props" or "Constrained Props",
+		num,
+		(num == 1 and self.linked_entities[1] == self) and "\nLinked only to self" or ""
+	))
 end
 
 function ENT:Setup( includeconstrained )
@@ -111,9 +102,11 @@ function ENT:Setup( includeconstrained )
 	self:ShowOutput()
 end
 
-function ENT:LinkEnt( ent )
+function ENT:LinkEnt( ent, dontupdateoutput )
+	if not ent or not ent:IsValid() then return end
+
 	if self.linked_entities_lookup[ent] then return false end
-	
+
 	self.linked_entities_lookup[ent] = true
 	self.linked_entities[#self.linked_entities+1] = ent
 	ent:CallOnRemove( "DDetector.Unlink", function( ent )
@@ -121,26 +114,26 @@ function ENT:LinkEnt( ent )
 			self:UnlinkEnt( ent )
 		end
 	end )
-	
-	self:ShowOutput()
+
+	if not dontupdateoutput then self:ShowOutput() end
 	WireLib.SendMarks( self, self.linked_entities )
 	return true
 end
 
 function ENT:UnlinkEnt( ent )
 	if not self.linked_entities_lookup[ent] then return false end
-	
+
 	self.linked_entities_lookup[ent] = nil
-	
+
 	for i=1,#self.linked_entities do
 		if self.linked_entities[i] == ent then
 			table.remove( self.linked_entities, i )
 			break
 		end
 	end
-	
+
 	ent:RemoveCallOnRemove( "DDetector.Unlink" )
-	
+
 	self:ShowOutput()
 	WireLib.SendMarks( self, self.linked_entities )
 	return true
@@ -152,10 +145,10 @@ function ENT:ClearEntities()
 			self.linked_entities[i]:RemoveCallOnRemove( "DDetector.Unlink" )
 		end
 	end
-	
+
 	self.linked_entities = {}
 	self.linked_entities_lookup = {}
-	
+
 	self:ShowOutput()
 	WireLib.SendMarks( self, self.linked_entities )
 	return true
@@ -166,13 +159,16 @@ function ENT:TriggerInput( iname, value )
 		self.on = value ~= 0
 	elseif iname == "Entities" then -- Populate linked_entities from "Array"
 		if value then
+			if self.arrayInputNextChange and self.arrayInputNextChange > CurTime() then return end
 			self:ClearEntities()
-			
+
 			for _, v in pairs( value ) do
 				if IsValid( v ) then
-					self:LinkEnt( v )
+					self:LinkEnt( v, true )
 				end
 			end
+			self.arrayInputNextChange = CurTime() + 1
+			self:ShowOutput()
 		end
 	elseif iname == "Entity" then
 		if IsValid( value )then
@@ -217,7 +213,7 @@ function ENT:UpdateLinkedEnts()		-- Check to see if prop is registered by the de
 			if self.includeconstrained == 1 then -- Don't update constrained entities unless we have to
 				self:UpdateConstrainedEnts( ent )
 			end
-			
+
 			self.key_ents[ent] = true
 		else
 			self.linked_entities[ent] = nil
@@ -227,16 +223,40 @@ end
 
 function ENT:UpdateConstrainedEnts( ent ) -- Finds all entities constrained to 'ent'
 	local ents = constraint.GetAllConstrainedEntities( ent )
-	
+
 	for _,v in pairs( ents ) do
 		self.key_ents[v] = true
 	end
 end
-
+local damageTypes = {
+	[DMG_GENERIC] = "Generic",
+	[DMG_CRUSH] = "Crush",
+	[DMG_BULLET] = "Bullet",
+	[DMG_SLASH] = "Slash",
+	[DMG_BURN] = "Burn",
+	[DMG_VEHICLE] = "Vehicle",
+	[DMG_FALL] = "Fall",
+	[DMG_BLAST] = "Explosive",
+	[DMG_CLUB] = "Club",
+	[DMG_SHOCK] = "Shock",
+	[DMG_SONIC] = "Sonic",
+	[DMG_ENERGYBEAM] = "Laser",
+	[DMG_DROWN] = "Drown",
+	[DMG_PARALYZE] = "Poison",
+	[DMG_POISON] = "Poison",
+	[DMG_NERVEGAS] = "Neurotoxin",
+	[DMG_RADIATION] = "Radiation",
+	[DMG_ACID] = "Toxic",
+	[DMG_PHYSGUN] = "Gravgun",
+	[DMG_PLASMA] = "Plasma",
+	[DMG_AIRBOAT] = "AirboatGun",
+	[DMG_ENERGYBEAM] = "Laser",
+	[DMG_DIRECT] = "Direct"
+}
 function ENT:UpdateDamage( dmginfo, ent ) -- Update damage table
 	local damage = dmginfo:GetDamage()
 
-	if !self.hit then -- Only register the first target's damage info
+	if not self.hit then -- Only register the first target's damage info
 		self.firsthit_dmginfo = {
 			dmginfo:GetAttacker(),
 			ent,
@@ -244,14 +264,10 @@ function ENT:UpdateDamage( dmginfo, ent ) -- Update damage table
 			dmginfo:GetDamageForce()
 		}
 
-		-- Damage type (handle common types)
-		self.dmgtype = ""
-		if dmginfo:IsExplosionDamage() then self.dmgtype = "Explosive"
-		elseif dmginfo:IsBulletDamage() or dmginfo:IsDamageType(DMG_BUCKSHOT) then self.dmgtype = "Bullet"
-		elseif dmginfo:IsDamageType(DMG_SLASH) or dmginfo:IsDamageType(DMG_CLUB) then self.dmgtype = "Melee"
-		elseif dmginfo:IsFallDamage() then self.dmgtype = "Fall"
-		elseif dmginfo:IsDamageType(DMG_CRUSH) then self.dmgtype = "Crush"
-		end
+		-- Damage type (handle almost all types)
+		self.dmgtype = damageTypes[dmginfo:GetDamageType()] or "Other"
+
+
 
 		self.victims = table.Copy(DEFAULT)
 		self.firsthit_dmginfo[5] = self.dmgtype
@@ -290,11 +306,11 @@ end
 duplicator.RegisterEntityClass("gmod_wire_damage_detector", WireLib.MakeWireEnt, "Data", "includeconstrained")
 
 function ENT:BuildDupeInfo()
-	local info = self.BaseClass.BuildDupeInfo(self) or {}
-	
+	local info = BaseClass.BuildDupeInfo(self) or {}
+
 	if #self.linked_entities > 0 then
 		info.linked_entities = {}
-		
+
 		for i=1,#self.linked_entities do
 			if IsValid( self.linked_entities[i] ) then
 				info.linked_entities[i] = self.linked_entities[i]:EntIndex()
@@ -303,13 +319,13 @@ function ENT:BuildDupeInfo()
 			end
 		end
 	end
-	
+
 	return info
 end
 
 function ENT:ApplyDupeInfo(ply, ent, info, GetEntByID)
-	self.BaseClass.ApplyDupeInfo(self, ply, ent, info, GetEntByID)
-	
+	BaseClass.ApplyDupeInfo(self, ply, ent, info, GetEntByID)
+
 	if info.linked_entities then
 		if type( info.linked_entities ) == "number" then -- old dupe compatibility
 			self:LinkEnt( GetEntByID( info.linked_entities ) )
@@ -319,7 +335,7 @@ function ENT:ApplyDupeInfo(ply, ent, info, GetEntByID)
 			end
 		end
 	end
-	
+
 	self:ShowOutput()
 	-- wait a while after dupe before sending marks, because the entity doesn't exist clientside yet
 	timer.Simple( 0.1, function() if IsValid( self ) then WireLib.SendMarks( self, self.linked_entities ) end end )

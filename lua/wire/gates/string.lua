@@ -2,6 +2,8 @@
 	String gates  !  :P
 ]]
 
+local MAX_LEN = 64*1024 -- max string length of 64k
+
 GateActions("String")
 
 GateActions["string_ceq"] = {
@@ -30,12 +32,13 @@ GateActions["string_cineq"] = {
 
 GateActions["string_index"] = {
 	name = "Index",
+	description = "Gets the character at the index.",
 	inputs = { "A" , "Index" },
 	inputtypes = { "STRING" , "NORMAL" },
 	outputtypes = { "STRING" },
 	output = function(gate, A, B)
-		if !A then A = "" end
-		if !B then B = 0 end
+		if not A then A = "" end
+		if not B then B = 0 end
 		return string.sub(A,B,B)
 	end,
 	label = function(Out, A, B)
@@ -48,7 +51,7 @@ GateActions["string_length"] = {
 	inputs = { "A" },
 	inputtypes = { "STRING" },
 	output = function(gate, A)
-		if !A then A = "" end
+		if not A then A = "" end
 		return #A
 	end,
 	label = function(Out, A)
@@ -62,7 +65,7 @@ GateActions["string_upper"] = {
 	inputtypes = { "STRING" },
 	outputtypes = { "STRING" },
 	output = function(gate, A)
-		if !A then A = "" end
+		if not A then A = "" end
 		return string.upper(A)
 	end,
 	label = function(Out, A)
@@ -76,7 +79,7 @@ GateActions["string_lower"] = {
 	inputtypes = { "STRING" },
 	outputtypes = { "STRING" },
 	output = function(gate, A)
-		if !A then A = "" end
+		if not A then A = "" end
 		return string.lower(A)
 	end,
 	label = function(Out, A)
@@ -86,13 +89,14 @@ GateActions["string_lower"] = {
 
 GateActions["string_sub"] = {
 	name = "Substring",
+	description = "Gets a part of the string between the start and end indices (inclusive).",
 	inputs = { "A" , "Start" , "End" },
 	inputtypes = { "STRING" , "NORMAL" , "NORMAL" },
 	outputtypes = { "STRING" },
 	output = function(gate, A, B, C)
-		if !A then A = "" end
-		if !B then B = 1 end  -- defaults to start of string
-		if !C then C = -1 end -- defaults to end of string
+		if not A then A = "" end
+		if not B then B = 1 end  -- defaults to start of string
+		if not C then C = -1 end -- defaults to end of string
 		return string.sub(A,B,C)
 	end,
 	label = function(Out, A, B, C)
@@ -102,12 +106,13 @@ GateActions["string_sub"] = {
 
 GateActions["string_explode"] = {
 	name = "Explode",
+	description = "Splits a string into an array by the separator pattern.",
 	inputs = { "A" , "Separator" },
 	inputtypes = { "STRING" , "STRING" },
 	outputtypes = { "ARRAY" },
 	output = function(gate, A, B)
-		if !A then A = "" end
-		if !B then B = "" end
+		if not A then A = "" end
+		if not B then B = "" end
 		return string.Explode(B,A)
 	end,
 	label = function(Out, A, B)
@@ -117,6 +122,7 @@ GateActions["string_explode"] = {
 
 GateActions["string_find"] = {
 	name = "Find",
+	description = "Finds a substring within the string and outputs the position it begins.",
 	inputs = { "A", "B", "StartIndex" },
 	inputtypes = { "STRING", "STRING" },
 	outputtypes = { "NORMAL" },
@@ -131,13 +137,24 @@ GateActions["string_find"] = {
 	end
 }
 
-
 GateActions["string_concat"] = {
 	name = "Concatenate",
+	description = "Combines multiple strings together into one string.",
 	inputs = { "A" , "B" , "C" , "D" , "E" , "F" , "G" , "H" },
 	inputtypes = { "STRING" , "STRING" , "STRING" , "STRING" , "STRING" , "STRING" , "STRING" , "STRING" },
 	outputtypes = { "STRING" },
 	output = function(gate, A, B, C, D, E, F, G, H)
+		if  (A and #A or 0)
+		  + (B and #B or 0)
+		  + (C and #C or 0)
+		  + (D and #D or 0)
+		  + (E and #E or 0)
+		  + (F and #F or 0)
+		  + (G and #G or 0)
+		  + (H and #H or 0)  > MAX_LEN
+		then
+			return false
+		end
 		local T = {A,B,C,D,E,F,G,H}
 		return table.concat(T)
 	end,
@@ -148,11 +165,12 @@ GateActions["string_concat"] = {
 
 GateActions["string_trim"] = {
 	name = "Trim",
+	description = "Removes trailing and leading whitespace from the string.",
 	inputs = { "A" },
 	inputtypes = { "STRING" },
 	outputtypes = { "STRING" },
 	output = function(gate, A)
-		if !A then A = "" end
+		if not A then A = "" end
 		return string.Trim(A)
 	end,
 	label = function(Out, A)
@@ -162,13 +180,16 @@ GateActions["string_trim"] = {
 
 GateActions["string_replace"] = {
 	name = "Replace",
+	description = "Replaces each occurance of the ToBeReplaced pattern with the Replacer pattern.",
 	inputs = { "String" , "ToBeReplaced" , "Replacer" },
 	inputtypes = { "STRING" , "STRING" , "STRING" },
 	outputtypes = { "STRING" },
 	output = function(gate, A, B, C)
-		if !A then A = "" end
-		if !B then B = "" end
-		if !C then C = "" end
+		if not A then A = "" end
+		if not B then B = "" end
+		if not C then C = "" end
+		if #A + #B + #C > MAX_LEN then return false end
+		if not pcall(WireLib.CheckRegex, A, B) then return false end
 		return string.gsub(A,B,C)
 	end,
 	label = function(Out, A, B, C)
@@ -182,7 +203,7 @@ GateActions["string_reverse"] = {
 	inputtypes = { "STRING" },
 	outputtypes = { "STRING" },
 	output = function(gate, A)
-		if !A then A = "" end
+		if not A then A = "" end
 		return string.reverse(A)
 	end,
 	label = function(Out, A)
@@ -192,11 +213,12 @@ GateActions["string_reverse"] = {
 
 GateActions["string_tonum"] = {
 	name = "To Number",
+	description = "Tries to convert the string to a number.",
 	inputs = { "A" },
 	inputtypes = { "STRING" },
 	outputtypes = { "NORMAL" },
 	output = function(gate, A)
-		if !A then A = "" end
+		if not A then A = "" end
 		return tonumber(A)
 	end,
 	label = function(Out, A)
@@ -206,11 +228,12 @@ GateActions["string_tonum"] = {
 
 GateActions["string_tostr"] = {
 	name = "Number to String",
+	description = "Converts the number to a string.",
 	inputs = { "A" },
 	inputtypes = { "NORMAL" },
 	outputtypes = { "STRING" },
 	output = function(gate, A)
-		if !A then A = 0 end
+		if not A then A = 0 end
 		return tostring(A)
 	end,
 	label = function(Out, A)
@@ -220,11 +243,12 @@ GateActions["string_tostr"] = {
 
 GateActions["string_tobyte"] = {
 	name = "To Byte",
+	description = "Converts a character to a number representation.",
 	inputs = { "A" },
 	inputtypes = { "STRING" },
 	outputtypes = { "NORMAL" },
 	output = function(gate, A)
-		if !A then A = "" end
+		if not A then A = "" end
 		return string.byte(A)
 	end,
 	label = function(Out, A)
@@ -234,11 +258,12 @@ GateActions["string_tobyte"] = {
 
 GateActions["string_tochar"] = {
 	name = "To Character",
+	description = "Tries to convert a number to a character.",
 	inputs = { "A" },
 	inputtypes = { "NORMAL" },
 	outputtypes = { "STRING" },
 	output = function(gate, A)
-		if !A then A = 0 end
+		if not A or A < 0 or A > 255 then A = 0 end
 		return string.char(A)
 	end,
 	label = function(Out, A)
@@ -248,12 +273,16 @@ GateActions["string_tochar"] = {
 
 GateActions["string_repeat"] = {
 	name = "Repeat",
+	description = "Repeats a string by Num times.",
 	inputs = { "A" , "Num"},
 	inputtypes = { "STRING" , "NORMAL" },
 	outputtypes = { "STRING" },
 	output = function(gate, A, B)
-		if !A then A = "" end
-		if !B or B<1 then B = 1 end
+		if not A then A = "" end
+		if not B or B<0 then B = 0 end
+
+		if B * #A > MAX_LEN then return false end
+
 		return string.rep(A,B)
 	end,
 	label = function(Out, A)
@@ -292,52 +321,52 @@ GateActions["string_to_memory"] = {
   inputs = { "A" },
   inputtypes = { "STRING" },
   outputs = { "Memory" },
-  reset = function(gate) 
+  reset = function(gate)
     gate.stringQueued = false
     gate.stringChanged = false
-  	gate.currentString = ""
+    gate.currentString = ""
   end,
 
   output = function(gate, A)
     if (A ~= gate.currentString) then
-    	if (not gate.stringChanged) then
-    		gate.stringChanged = true
-    		gate.currentString = A
-    		gate.stringQueued = false
-    	else
-    		gate.stringQueued = true
-    	end
+      if (not gate.stringChanged) then
+        gate.stringChanged = true
+        gate.currentString = A
+        gate.stringQueued = false
+      else
+        gate.stringQueued = true
+      end
     end
-  	return gate.Outputs["Memory"].Value --This will prevent Wire_TriggerOutput from changing anything
+    return gate.Outputs["Memory"].Value --This will prevent Wire_TriggerOutput from changing anything
   end,
 
-  ReadCell = function(self, gate, Address) 
-  	if (Address == 0) then 	   --Clk
-  		if (gate.stringChanged) then return 1 else return 0 end
-  	elseif (Address == 1) then --String length
-  		return #(gate.currentString)
-  	else --Return string bytes
-  		local index = Address - 1
-  		if (index > #(gate.currentString)) then -- Check whether requested address is outside the string
-  			return 0 
-  		else 
-  			return string.byte(gate.currentString, index) 
-  		end
-  	end
+  ReadCell = function(self, gate, Address)
+    if (Address == 0) then 	   --Clk
+      if (gate.stringChanged) then return 1 else return 0 end
+    elseif (Address == 1) then --String length
+      return #(gate.currentString)
+    else --Return string bytes
+      local index = Address - 1
+      if (index > #(gate.currentString)) then -- Check whether requested address is outside the string
+        return 0
+      else
+        return string.byte(gate.currentString, index)
+      end
+    end
   end,
 
   WriteCell = function(self, gate, Address, value)
-  	if (Address == 0) and (value == 0) then --String got accepted
-  		gate.stringChanged = false
+    if (Address == 0) and (value == 0) then --String got accepted
+      gate.stringChanged = false
 	  	if gate.stringQueued then --Get queued string
 			gate.stringQueued = false
 			gate.currentString = gate.Inputs["A"].Value
-			gate.stringChanged = true		
+			gate.stringChanged = true
 	  	end
 	  	return true
-  	else
-  		return false
-  	end
+    else
+      return false
+    end
   end
 }
 
@@ -354,22 +383,22 @@ GateActions["string_from_memory"] = {
     gate.ready = true
   end,
 
-  output = function(gate) 
-  	return gate.currentString, gate.Outputs["Memory"].Value
+  output = function(gate)
+    return gate.currentString, gate.Outputs["Memory"].Value
   end,
 
-  ReadCell = function(self, gate, address) 
-  	if (address == 0) then
-  		return 0
-  	elseif (address == 1) then
-  		return gate.stringLength
-  	else
-  		return gate.memory[address-1] or 0 -- "or 0" to prevent it from returning nil if index is outside the array
-  	end
+  ReadCell = function(self, gate, address)
+    if (address == 0) then
+      return 0
+    elseif (address == 1) then
+      return gate.stringLength
+    else
+      return gate.memory[address-1] or 0 -- "or 0" to prevent it from returning nil if index is outside the array
+    end
   end,
 
   WriteCell = function(self, gate, address, value)
-  	if (value >= 0) then
+    if (value >= 0) then
 		if (address == 0) and (value == 1) then -- Clk has been set
 			local maxIndex = gate.stringLength
 			for i=1,gate.stringLength,1 do

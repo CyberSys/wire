@@ -32,7 +32,9 @@ function ENT:Initialize()
 	//1048575 - CLK
 
 	self.GPU = WireGPU(self)
-	
+
+	self.buffer = {}
+
 	WireLib.netRegister(self)
 end
 
@@ -46,67 +48,83 @@ local function stringToNumber(index, str, bytes)
 	str = str:sub(index,newpos-1)
 	local n = 0
 	for j=1,bytes do
-		n = n + str:byte(j)*math.pow(256,j-1)
+		n = n + str:byte(j)*(256^(j-1))
     end
 	return n, newpos
 end
 
-local pixelbits = {20, 8, 24, 30, 8, 3, 1, 3, 4, 1}
-net.Receive("wire_digitalscreen", function(netlen)
+local pixelbits = {3, 1, 3, 4, 1}
+net.Receive("wire_digitalscreen", function()
 	local ent = Entity(net.ReadUInt(16))
-	
+
 	if IsValid(ent) and ent.Memory1 and ent.Memory2 then
-		local compression = net.ReadUInt(1)
-		local pixelformat = net.ReadUInt(5)
-		local pixelbit = pixelbits[pixelformat]
-		local readData
-		
-		if compression==0 then
-			readData = function()
-				local length = net.ReadUInt(20)
-				if length == 0 then return end
-				local address = net.ReadUInt(20)
-				for i = address, address + length - 1 do
-					if i>=1048500 then
-						ent:WriteCell(i, net.ReadUInt(10))
-					else
-						ent:WriteCell(i, net.ReadUInt(pixelbit))
-					end
-				end
-				return true
-			end
-		else
-			pixelbit = pixelbits[pixelformat+5]
-			local datastr = util.Decompress(net.ReadData((netlen-22)/8))
-			if not datastr then return end
-			local readIndex = 1
-			
-			readData = function()
-				local length
-				length, readIndex = stringToNumber(readIndex,datastr,3)
-				if length == 0 then return end
-				local address
-				address, readIndex = stringToNumber(readIndex,datastr,3)
-				for i = address, address + length - 1 do
-					if i>=1048500 then
-						local data
-						data, readIndex = stringToNumber(readIndex,datastr,2)
-						ent:WriteCell(i, data)
-					else
-						local data
-						data, readIndex = stringToNumber(readIndex,datastr,pixelbit)
-						ent:WriteCell(i, data)
-					end
-				end
-				return true
-			end
+		local pixelbit = pixelbits[net.ReadUInt(5)]
+		local len = net.ReadUInt(32)
+		local datastr = util.Decompress(net.ReadData(len))
+		if #datastr>0 then
+			ent:AddBuffer(datastr,pixelbit)
 		end
-	
-		while readData() do end
 	end
 end)
 
+function ENT:AddBuffer(datastr,pixelbit)
+	self.buffer[#self.buffer+1] = {datastr=datastr,readIndex=1,pixelbit=pixelbit}
+end
+function ENT:ProcessBuffer()
+	if not self.buffer[1] then return end
+
+	local datastr = self.buffer[1].datastr
+	local readIndex = self.buffer[1].readIndex
+	local pixelbit = self.buffer[1].pixelbit
+
+	local length
+	length, readIndex = stringToNumber(readIndex,datastr,3)
+	if length == 0 then
+		table.remove( self.buffer, 1 )
+		return false
+	end
+	local address
+	address, readIndex = stringToNumber(readIndex,datastr,3)
+
+	for i = address, address + length - 1 do
+		if i>=1048500 then
+			local data
+			data, readIndex = stringToNumber(readIndex,datastr,2)
+			self:WriteCell(i, data)
+		else
+			local data
+			data, readIndex = stringToNumber(readIndex,datastr,pixelbit)
+			self:WriteCell(i, data)
+		end
+
+		coroutine.yield(true)
+	end
+
+	self.buffer[1].readIndex = readIndex
+	return false
+end
+
+function ENT:Think()
+	if self.buffer[1] ~= nil then
+		local maxtime = SysTime() + RealFrameTime() * 0.05 -- do more depending on client FPS. Higher fps = more work
+
+		while SysTime() < maxtime and self.buffer[1] do
+			if not self.co or coroutine.status(self.co) == "dead" then
+				self.co = coroutine.create( function()
+					 self:ProcessBuffer()
+				end )
+			end
+
+			coroutine.resume(self.co)
+		end
+	end
+
+	self:NextThink(CurTime()+0.1)
+	return true
+end
+
 function ENT:ReadCell(Address,value)
+	Address = math.floor(Address)
 	if Address < 0 then return nil end
 	if Address >= 1048577 then return nil end
 
@@ -114,6 +132,7 @@ function ENT:ReadCell(Address,value)
 end
 
 function ENT:WriteCell(Address,value)
+	Address = math.floor(Address)
 	if Address < 0 then return false end
 	if Address >= 1048577 then return false end
 
@@ -137,7 +156,7 @@ function ENT:WriteCell(Address,value)
 	end
 	self.Memory2[Address] = value -- invisible buffer
 
-	if Address == 1048574 then
+	if Address == 1048574 then -- Hardware Clear Screen
 		local mem1,mem2 = {},{}
 		for addr = 1048500,1048575 do
 			mem1[addr] = self.Memory1[addr]
@@ -147,6 +166,7 @@ function ENT:WriteCell(Address,value)
 		self.IsClear = true
 		self.ClearQueued = true
 		self.NeedRefresh = true
+		self.RefreshRows = {}
 	elseif Address == 1048572 then
 		self.ScreenHeight = value
 		if not self.IsClear then
@@ -228,17 +248,12 @@ function ENT:RedrawPixel(a)
 		cr, cg, cb = (transformcolor[colormode] or transformcolor[0])(c)
 	end
 
-	local xstep = (512/self.ScreenWidth)
-	local ystep = (512/self.ScreenHeight)
 
 	surface.SetDrawColor(cr,cg,cb,255)
-	local tx, ty = floor(x*xstep), floor(y*ystep)
-	surface.DrawRect( tx, ty, floor((x+1)*xstep-tx), floor((y+1)*ystep-ty) )
+	surface.DrawRect( x, y, 1, 1 )
 end
 
 function ENT:RedrawRow(y)
-	local xstep = (512/self.ScreenWidth)
-	local ystep = (512/self.ScreenHeight)
 	if y >= self.ScreenHeight then return end
 	local a = y*self.ScreenWidth
 
@@ -257,52 +272,54 @@ function ENT:RedrawRow(y)
 		end
 
 		surface.SetDrawColor(cr,cg,cb,255)
-		local tx, ty = floor(x*xstep), floor(y*ystep)
-		surface.DrawRect( tx, ty, floor((x+1)*xstep-tx), floor((y+1)*ystep-ty) )
+		surface.DrawRect( x, y, 1, 1 )
 	end
 end
 
+local VECTOR_1_1_1 = Vector(1, 1, 1)
 function ENT:Draw()
 	self:DrawModel()
 
+	local tone = render.GetToneMappingScaleLinear()
+	render.SetToneMappingScaleLinear(VECTOR_1_1_1)
+
 	if self.NeedRefresh then
 		self.NeedRefresh = false
+		local maxtime = SysTime() + RealFrameTime() * 0.01
 
 		self.GPU:RenderToGPU(function()
-			local pixels = 0
 			local idx = 0
 
 			if self.ClearQueued then
 				surface.SetDrawColor(0,0,0,255)
-				surface.DrawRect(0,0, 512,512)
+				surface.DrawRect(0,0, 1024,1024)
 				self.ClearQueued = false
+				return
 			end
 
 			if (#self.RefreshRows > 0) then
 				idx = #self.RefreshRows
-				while ((idx > 0) and (pixels < 8192)) do
+				while ((idx > 0) and (SysTime() < maxtime)) do
 					self:RedrawRow(self.RefreshRows[idx])
 					self.RefreshRows[idx] = nil
 					idx = idx - 1
-					pixels = pixels + self.ScreenWidth
 				end
 			else
 				idx = #self.RefreshPixels
-				while ((idx > 0) and (pixels < 8192)) do
+				while ((idx > 0) and (SysTime() < maxtime)) do
 					self:RedrawPixel(self.RefreshPixels[idx])
 					self.RefreshPixels[idx] = nil
 					idx = idx - 1
-					pixels = pixels + 1
 				end
 			end
 			if idx ~= 0 then
 				self.NeedRefresh = true
 			end
 		end)
-
 	end
 
-	self.GPU:Render()
+	self.GPU:Render(0,0,1024,1024,nil,-(1024-self.ScreenWidth)/1024,-(1024-self.ScreenHeight)/1024)
+	render.SetToneMappingScaleLinear(tone)
 	Wire_Render(self)
 end
 

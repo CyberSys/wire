@@ -24,7 +24,7 @@ function ENT:Initialize()
 end
 
 function ENT:Think()
-	self.BaseClass.Think(self)
+	BaseClass.Think(self)
 
 	for i = 0,7 do
 		if self.OutPorts[i] then
@@ -37,7 +37,8 @@ function ENT:Think()
 end
 
 function ENT:ReadCell(Address)
-	if (Address >= 0) && (Address <= 7) then
+	Address = math.floor(Address)
+	if (Address >= 0) and (Address <= 7) then
 		return self.Ports[Address]
 	else
 		return nil
@@ -45,7 +46,8 @@ function ENT:ReadCell(Address)
 end
 
 function ENT:WriteCell(Address, value)
-	if (Address >= 0) && (Address <= 7) then
+	Address = math.floor(Address)
+	if (Address >= 0) and (Address <= 7) then
 		self.OutPorts[Address] = value
 		return true
 	else

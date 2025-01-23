@@ -17,6 +17,7 @@
 --       self.GPU:Render()
 --------------------------------------------------------------------------------
 
+
 GPULib = {}
 
 local GPU = {}
@@ -33,6 +34,10 @@ function GPULib.WireGPU(ent, ...)
 	return self
 end
 WireGPU = GPULib.WireGPU
+
+function GPU:SetTranslucentOverride(bool)
+	self.translucent = bool;
+end
 
 function GPU:GetInfo()
 	local ent = self.Entity
@@ -66,47 +71,37 @@ if CLIENT then
 	end
 
 	-- Handles rendertarget caching
-	local RT_CACHE_SIZE = 32
+	local RT_CACHE_SIZE = 64
 	local RenderTargetCache = { }
 
-	for i = 1,RT_CACHE_SIZE do
+	-- Todo: Just dynamically create table elements instead of having them pre-defined?
+	for i = 1, RT_CACHE_SIZE do
 		local Target = {
 			false, -- Is rendertarget in use
-			false -- The rendertarget (false if doesn't exist)
+			nil -- The rendertarget
 		}
-		table.insert( RenderTargetCache, Target )
+		table.insert(RenderTargetCache, Target)
 	end
 
 	-- Returns a render target from the cache pool and marks it as used
 	local function GetRT()
-
-		for i, RT in pairs( RenderTargetCache ) do
+		for i, RT in ipairs(RenderTargetCache) do
 			if not RT[1] then -- not used
-
 				local rendertarget = RT[2]
 				if rendertarget then
 					RT[1] = true -- Mark as used
 					return rendertarget
-				end
-
-			end
-		end
-
-		-- No free rendertargets. Find first non used and create it.
-		for i, RT in pairs( RenderTargetCache ) do
-			if not RT[1] and  RT[2] == false then -- not used and doesn't exist, let's create the render target.
-
-					local rendertarget = GetRenderTarget("WireGPU_RT_"..i, 512, 512)
-
+				else
+				local rendertarget = GetRenderTargetEx("WireGPU_RT_" .. i, 1024, 1024, RT_SIZE_NO_CHANGE, MATERIAL_RT_DEPTH_SEPARATE, 256, 0, 12)
 					if rendertarget then
 						RT[1] = true -- Mark as used
 						RT[2] = rendertarget -- Assign the RT
 						return rendertarget
 					else
 						RT[1] = true -- Mark as used since we couldn't create it
-						ErrorNoHalt("Wiremod: Render target ".."WireGPU_RT_"..i.." could not be created!\n")
+						ErrorNoHalt("Wiremod: Render target WireGPU_RT_" .. i .. " could not be created!\n")
 					end
-
+				end
 			end
 		end
 
@@ -133,27 +128,40 @@ if CLIENT then
 	//
 	// Create basic fonts
 	//
-	local fontData = 
+	local fontData =
 	{
 		font="lucida console",
-		size=20,
+		size=40,
 		weight=800,
 		antialias= true,
 		additive = false,
 	}
 	surface.CreateFont("WireGPU_ConsoleFont", fontData)
+  surface.CreateFont("LCDFontBlur", {
+        font = "Alphanumeric LCD",
+        size = 26,
+        antialias = false,
+        blursize = 1
+      })
+  surface.CreateFont("LCDFont", {
+    font = "Alphanumeric LCD",
+    size = 26,
+    antialias = false
+  })
 	//
 	// Create screen textures and materials
 	//
-	WireGPU_matScreen = CreateMaterial("GPURT","UnlitGeneric",{
+	WireGPU_matScreen = CreateMaterial("sprites/GPURT","UnlitGeneric",{
 		["$vertexcolor"] = 1,
 		["$vertexalpha"] = 1,
+    ["$translucent"] = 1,
 		["$ignorez"] = 1,
 		["$nolod"] = 1,
 		})
-	WireGPU_matBuffer = CreateMaterial("GPUBUF","UnlitGeneric",{
+	WireGPU_matBuffer = CreateMaterial("sprites/GPUBUF","UnlitGeneric",{
 		["$vertexcolor"] = 1,
 		["$vertexalpha"] = 1,
+    ["$translucent"] = 1,
 		["$ignorez"] = 1,
 		["$nolod"] = 1,
 	})
@@ -208,7 +216,7 @@ if CLIENT then
 
 	function GPU:Clear(color)
 		if not self.RT then return end
-		render.ClearRenderTarget(self.RT, color or Color(0, 0, 0))
+		render.ClearRenderTarget(self.RT, color or Color(0, 0, 0, 0))
 	end
 
 	local texcoords = {
@@ -238,7 +246,7 @@ if CLIENT then
 		},
 	}
 	-- helper function for GPU:Render
-	function GPU.DrawScreen(x, y, w, h, rotation, scale)
+	function GPU.DrawScreen(x, y, w, h, rotation, scale, uvclipx, uvclipy)
 		-- generate vertex data
 		local vertices = {
 			--[[
@@ -260,12 +268,12 @@ if CLIENT then
 			if tex.u == 0 then
 				vertex.u = tex.u-scale
 			else
-				vertex.u = tex.u+scale
+				vertex.u = tex.u+scale+uvclipx
 			end
 			if tex.v == 0 then
 				vertex.v = tex.v-scale
 			else
-				vertex.v = tex.v+scale
+				vertex.v = tex.v+scale+uvclipy
 			end
 		end
 
@@ -288,7 +296,7 @@ if CLIENT then
 		local OldRT = render.GetRenderTarget()
 
 		render.SetRenderTarget(NewRT)
-		render.SetViewPort(0, 0, 512, 512)
+		render.SetViewPort(0, 0, 1024, 1024)
 		cam.Start2D()
 			local ok, err = xpcall(renderfunction, debug.traceback)
 			if not ok then WireLib.ErrorNoHalt(err) end
@@ -310,19 +318,19 @@ if CLIENT then
 			pos = pos - ang:Forward()*(monitor.x2-monitor.x1)/2
 		end
 
-		local h = width and width*monitor.RatioX or height or 512
+		local h = width and width*monitor.RatioX or height or 1024
 		local w = width or h/monitor.RatioX
 		local x = -w/2
 		local y = -h/2
 
-		local res = monitor.RS*512/h
+		local res = monitor.RS*1024/h
 		cam.Start3D2D(pos, ang, res)
 			local ok, err = xpcall(renderfunction, debug.traceback, x, y, w, h, monitor, pos, ang, res)
 			if not ok then WireLib.ErrorNoHalt(err) end
 		cam.End3D2D()
 	end
 
-	function GPU:Render(rotation, scale, width, height, postrenderfunction)
+	function GPU:Render(rotation, scale, width, height, postrenderfunction, uvclipx, uvclipy)
 		if not self.RT then return end
 
 		local monitor, pos, ang = self:GetInfo()
@@ -334,17 +342,32 @@ if CLIENT then
 		cam.Start3D2D(pos, ang, res)
 			local ok, err = xpcall(function()
 				local aspect = 1/monitor.RatioX
-				local w = (width  or 512)*aspect
-				local h = (height or 512)
+				local w = (width  or 1024)*aspect
+				local h = (height or 1024)
 				local x = -w/2
 				local y = -h/2
 
-				surface.SetDrawColor(0,0,0,255)
-				surface.DrawRect(-256*aspect,-256,512*aspect,512)
+				local translucent = self.translucent;
+
+				if translucent == nil then
+					translucent = monitor.translucent
+				end
+
+				if not translucent then
+					surface.SetDrawColor(0,0,0,255)
+					surface.DrawRect(-512*aspect,-512,1024*aspect,1024)
+				end
 
 				surface.SetDrawColor(255,255,255,255)
 				surface.SetMaterial(WireGPU_matScreen)
-				self.DrawScreen(x, y, w, h, rotation or 0, scale or 0)
+
+				render.PushFilterMag(self.texture_filtering or TEXFILTER.POINT)
+				render.PushFilterMin(self.texture_filtering or TEXFILTER.POINT)
+
+				self.DrawScreen(x, y, w, h, rotation or 0, scale or 0, uvclipx or 0, uvclipy or 0)
+
+				render.PopFilterMin()
+				render.PopFilterMag()
 
 				if postrenderfunction then postrenderfunction(pos, ang, res, aspect, monitor) end
 			end, debug.traceback)
@@ -401,7 +424,7 @@ if CLIENT then
 		local model = ent:GetModel()
 		local monitor = WireGPU_Monitors[model]
 
-		local h = 512*monitor.RS
+		local h = 1024*monitor.RS
 		local w = h/monitor.RatioX
 		local x = -w/2
 		local y = -h/2
@@ -414,7 +437,7 @@ if CLIENT then
 		}
 
 		local mins, maxs = screen:OBBMins(), screen:OBBMaxs()
-		
+
 		local timerid = "wire_gpulib_updatebounds"..screen:EntIndex()
 		local function setbounds()
 			if not screen:IsValid() then
@@ -465,18 +488,7 @@ elseif SERVER then
 			umsg.Short(screen:EntIndex())
 			umsg.Short(ent:EntIndex())
 		umsg.End()
-
-		duplicator.StoreEntityModifier(screen, "wire_gpulib_switcher", { screen:EntIndex(), ent:EntIndex() })
 	end
-
-	duplicator.RegisterEntityModifier("wire_gpulib_switcher", function(ply, screen, data)
-		local screenid, entid = unpack(data)
-		if entid == screenid then return end -- no need to switch the screen
-
-		WireLib.PostDupe(entid, function(ent)
-			GPULib.switchscreen(screen, ent)
-		end)
-	end)
 
 end
 
@@ -686,7 +698,7 @@ elseif SERVER then
       elseif sequentialBlock and
              (compressBlock.Size == size) then
         -- Add to previous block of data
-        if (#compressBlock.Data == 1) and (compressBlock.Data[1] == value) and (sequentialBlock) then
+        if (#compressBlock.Data == 1) and (compressBlock.Data[1] == value) and (sequentialBlock) and (compressBlock.Repeat < 256) then
           -- RLE compression
           compressBlock.Repeat = compressBlock.Repeat + 1
         elseif compressBlock.Repeat > 1 then

@@ -15,7 +15,7 @@ function ENT:InitializeShared()
 end
 
 
-if CLIENT then 
+if CLIENT then
 	local Layouter = {}
 	Layouter.__index = Layouter
 
@@ -142,8 +142,8 @@ if CLIENT then
 		if self.NeedRefresh then
 			self.NeedRefresh = nil
 			self.GPU:RenderToGPU(function()
-				local w = 512
-				local h = 512
+				local w = 1024
+				local h = 1024
 
 				surface.SetDrawColor(self.bgcolor.r, self.bgcolor.g, self.bgcolor.b, 255)
 				surface.DrawRect(0, 0, w, h)
@@ -190,14 +190,14 @@ if CLIENT then
 			self:SetText(net.ReadString())
 		end
 	end
-	
+
 	local createdFonts = {}
 	function ENT:CreateFont(font, chrPerLine)
 		if createdFonts[font .. chrPerLine] then return end
 
 		local fontData = {
 			font = font,
-			size = 380 / chrPerLine,
+			size = 760 / chrPerLine,
 			weight = 400,
 			antialias = true,
 			additive = false
@@ -206,7 +206,7 @@ if CLIENT then
 		createdFonts[font .. chrPerLine] = true
 		self.NeedRefresh = true
 	end
-	
+
 	return  -- No more client
 end
 
@@ -217,6 +217,8 @@ function ENT:Initialize()
 	self:SetMoveType( MOVETYPE_VPHYSICS )
 	self:SetSolid( SOLID_VPHYSICS )
 
+	self.doSendText = false
+	self.doSendConfig = false
 	self.Inputs = WireLib.CreateSpecialInputs(self, { "String", "Font", "FGColor", "BGColor" }, { "STRING", "STRING", "VECTOR", "VECTOR" })
 	self:InitializeShared()
 end
@@ -229,15 +231,14 @@ function ENT:Setup(DefaultText, chrPerLine, textJust, valign, tfont, fgcolor, bg
 	self.valign = valign or 0
 	self.tfont = tfont or "Arial"
 	self:SendConfig()
-	
-	self.text = DefaultText or ""
-	self:TriggerInput("String", self.text)
+
+	self:TriggerInput("String", DefaultText or "")
 end
 
 function ENT:TriggerInput(iname, value)
 	if iname == "String" then
-		self.text = tostring(value)
-		self:SendText()
+		self.text = string.sub(tostring(value), 1, 1024)
+		self.doSendText = true
 	elseif iname == "Font" then
 		self.tfont = tostring(value)
 		self.doSendConfig = true
@@ -255,6 +256,7 @@ local function formatText(text)
 end
 
 function ENT:SendText(ply)
+	self.doSendText = false
 	WireLib.netStart(self)
 		net.WriteBit(false) -- Sending Text
 		net.WriteString(formatText(self.text))
@@ -265,24 +267,27 @@ function ENT:Think()
 	if self.doSendConfig then
 		self:SendConfig()
 	end
+	if self.doSendText then
+		self:SendText()
+	end
 end
 
 function ENT:SendConfig(ply)
-	self.doSendConfig = nil
+	self.doSendConfig = false
 	WireLib.netStart(self)
 		net.WriteBit(true) -- Sending Config
 		net.WriteUInt(self.chrPerLine, 4)
 		net.WriteUInt(self.textJust, 2)
 		net.WriteUInt(self.valign, 2)
-		
+
 		net.WriteUInt(self.fgcolor.r, 8)
 		net.WriteUInt(self.fgcolor.g, 8)
 		net.WriteUInt(self.fgcolor.b, 8)
-		
+
 		net.WriteUInt(self.bgcolor.r, 8)
 		net.WriteUInt(self.bgcolor.g, 8)
 		net.WriteUInt(self.bgcolor.b, 8)
-		net.WriteString(self.tfont)
+		net.WriteString(string.sub(self.tfont,0,31))
 	WireLib.netEnd(ply)
 end
 

@@ -59,20 +59,20 @@ function ENT:Setup( delay, undo_delay, spawn_effect, mat, r, g, b, a, skin )
 	self.delay = delay
 	self.undo_delay = undo_delay
 	self.spawn_effect = spawn_effect
-	if r then 
+	if r then
 		self.mat = mat
 		self.r = r
 		self.g = g
 		self.b = b
 		self.a = a
 		self.skin = skin
-	
+
 		self:SetRenderMode(3)
 		self:SetMaterial(mat or "")
 		self:SetSkin(skin or 0)
 		self:SetColor(Color(r or 255, g or 255, b or 255, 100))
 	end
-	
+
 	self:ShowOutput()
 end
 
@@ -87,7 +87,18 @@ end
 
 function ENT:DoSpawn( pl, down )
 
-	if self.DisabledByTouch or self.DisabledByTimeUntil > CurTime() then return end
+	if self.DisabledByTimeUntil > CurTime() then return end
+
+	if self.DisabledByTouch then --If we'll teleport spawned prop fast prop spawner will remain disabled forever (Fix by Supertos)
+		-- self.TouchDisabledProp is entity, not table here 'cause we can't spawn any more props while this one is stuck
+		if IsValid( self.TouchDisabledProp ) then	--If there's no prop why should we even care?
+			local mins, maxs = self:GetPhysicsObject():GetAABB()
+			local size = maxs-mins
+			local test_radius = math.max( size.X, size.Y, size.Z )
+
+			if self.TouchDisabledProp:GetPos():Distance( self:GetPos() ) < test_radius*2 then return end --This prop is still inside prop spawner (Multiple by two because spawned prop has some volume too )
+		end
+	end
 
 	local ent	= self
 	if (not ent:IsValid()) then return end
@@ -130,7 +141,7 @@ function ENT:DoSpawn( pl, down )
 		undo.AddEntity( nocollide )
 		undo.SetPlayer( pl )
 	undo.Finish()
-	
+
 	-- Check if the player is NULL (ab0mbs)
 	if IsValid(pl) then
 	pl:AddCleanup( "props", prop )
@@ -147,6 +158,7 @@ function ENT:DoSpawn( pl, down )
 	self:ShowOutput()
 
 	self.DisabledByTouch = true
+	self.TouchDisabledProp = prop
 	self.DisabledByTimeUntil = CurTime() + wire_spawner_delay:GetFloat()
 
 	if (self.undo_delay == 0) then return end

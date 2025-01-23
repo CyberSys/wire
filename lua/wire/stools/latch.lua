@@ -4,11 +4,15 @@ WireToolSetup.open( "latch", "Weld/Constraint Latch", "gmod_wire_latch", nil, "C
 TOOL.ClientConVar[ "model" ] = "models/jaanus/wiretool/wiretool_siren.mdl"
 
 if CLIENT then
-    language.Add( "Tool.wire_latch.name", "Latch Tool (Wire)" )
-    language.Add( "Tool.wire_latch.desc", "Makes a controllable latch" )
-    language.Add( "Tool.wire_latch.0", "Primary: Click on first entity to be latched" )
-    language.Add( "Tool.wire_latch.1", "Left click on the second entity" )
-    language.Add( "Tool.wire_latch.2", "Left click to place the controller" )
+	language.Add( "Tool.wire_latch.name", "Latch Tool (Wire)" )
+	language.Add( "Tool.wire_latch.desc", "Makes a controllable latch" )
+	TOOL.Information = {
+		{ name = "left_0", stage = 0, text = "Choose the first entity to be latched" },
+		{ name = "left_1", stage = 1, text = "Choose the second entity to be latched" },
+		{ name = "reload_1", stage = 1, text = "Cancel" },
+		{ name = "left_2", stage = 2, text = "Place the controller" },
+		{ name = "reload_2", stage = 2, text = "Cancel" },
+	}
 end
 WireToolSetup.BaseLang()
 WireToolSetup.SetupMax( 15 )
@@ -17,7 +21,7 @@ function TOOL:LeftClick( trace )
 	if trace.Entity:IsValid() and trace.Entity:IsPlayer() then return end
 
 	// If there's no physics object then we can't constraint it!
-	if SERVER and !util.IsValidPhysicsObject( trace.Entity, trace.PhysicsBone ) then return false end
+	if SERVER and not util.IsValidPhysicsObject( trace.Entity, trace.PhysicsBone ) then return false end
 
 	local iNum = self:NumObjects()
 
@@ -33,10 +37,10 @@ function TOOL:LeftClick( trace )
 		local ply = self:GetOwner()
 		local Ent1, Ent2, Ent3  = self:GetEnt(1),	 self:GetEnt(2), trace.Entity
 		local const = self.Constraint
-		
+
 		local controller = self:LeftClick_Make( trace, ply )
 		if isbool(controller) then return controller end
-		if !IsValid(controller) then
+		if not IsValid(controller) then
 			WireLib.AddNotify( self:GetOwner(), "Weld latch controller placement failed!", NOTIFY_GENERIC, 7 )
 			self.Constraint = nil
 			self:ClearObjects()

@@ -14,23 +14,6 @@ local invalid_filename_chars = {
 	[" "] = "_",
 }
 
-local function GetFileName(name)
-	local name = string.Replace(name, ".txt", "")
-	return string.Replace(name, "/", "")
-end
-
-local function InternalDoClick(self)
-	self:GetRoot():SetSelectedItem(self)
-	if (self:DoClick()) then return end
-	if (self:GetRoot():DoClick(self)) then return end
-end
-
-local function InternalDoRightClick(self)
-	self:GetRoot():SetSelectedItem(self)
-	if (self:DoRightClick()) then return end
-	if (self:GetRoot():DoRightClick(self)) then return end
-end
-
 local function fileName(filepath)
 	return string.match(filepath, "[/\\]?([^/\\]*)$")
 end
@@ -40,14 +23,14 @@ local string_lower = string.lower
 function PANEL:Search( str, foldername, fullpath, parentfullpath, first_recursion )
 	if not self.SearchFolders[fullpath] then
 		self.SearchFolders[fullpath] = (self.SearchFolders[parentfullpath] or self.Folders):AddNode( foldername )
-	
+
 		local files, folders = file.Find( fullpath .. "/*", "DATA" )
-		
+
 		local node = self.SearchFolders[fullpath]
 		if fullpath == self.startfolder then self.Root = node end -- get root
 		node.Icon:SetImage( "icon16/arrow_refresh.png" )
 		node:SetExpanded( true )
-		
+
 		local myresults = 0
 		for i=1,#files do
 			if string_find( string_lower( files[i] ), str, 1, true ) ~= nil then
@@ -55,10 +38,10 @@ function PANEL:Search( str, foldername, fullpath, parentfullpath, first_recursio
 				filenode:SetFileName( fullpath .. "/" .. files[i] )
 				myresults = myresults + 1
 			end
-			
+
 			coroutine.yield()
 		end
-		
+
 		if #folders == 0 then
 			if myresults == 0 then
 				if node ~= self.Root then node:Remove() end
@@ -68,7 +51,7 @@ function PANEL:Search( str, foldername, fullpath, parentfullpath, first_recursio
 					return false, myresults
 				end
 			end
-			
+
 			node.Icon:SetImage( "icon16/folder.png" )
 			if first_recursion then
 				coroutine.yield( true, myresults )
@@ -81,11 +64,11 @@ function PANEL:Search( str, foldername, fullpath, parentfullpath, first_recursio
 				if b then
 					myresults = myresults + res
 				end
-				
+
 				coroutine.yield()
 			end
-			
-			
+
+
 			if myresults > 0 then
 				node.Icon:SetImage( "icon16/folder.png" )
 				if first_recursion then
@@ -103,7 +86,7 @@ function PANEL:Search( str, foldername, fullpath, parentfullpath, first_recursio
 			end
 		end
 	end
-	
+
 	if first_recursion then
 		coroutine.yield( false, 0 )
 	else
@@ -111,7 +94,7 @@ function PANEL:Search( str, foldername, fullpath, parentfullpath, first_recursio
 	end
 end
 
-local function check_results( status, bool, count )
+function PANEL:CheckSearchResults( status, bool, count )
 	if bool ~= nil and count ~= nil then -- we're done searching
 		if count == 0 then
 			local node = self.Root:AddNode( "No results" )
@@ -128,18 +111,18 @@ end
 
 function PANEL:StartSearch( str )
 	self:UpdateFolders( true )
-	
+
 	self.SearchFolders = {}
-	
+
 	local crt = coroutine.create( self.Search )
 	local status, bool, count = coroutine.resume( crt, self, str, self.startfolder, self.startfolder, "", true )
-	check_results( status, bool, count )
-	
+	self:CheckSearchResults( status, bool, count )
+
 	timer.Create( "wire_expression2_search", 0, 0, function()
 		for i=1,100 do -- Load loads of files/folders at a time
 			local status, bool, count = coroutine.resume( crt )
 
-			if check_results( status, bool, count ) then
+			if self:CheckSearchResults( status, bool, count ) then
 				return -- exit loop etc
 			end
 		end
@@ -147,50 +130,31 @@ function PANEL:StartSearch( str )
 end
 
 function PANEL:Init()
-	self:SetDrawBackground(false)
-	
+	self:SetPaintBackground(false)
+
 	self.SearchBox = vgui.Create( "DTextEntry", self )
 	self.SearchBox:Dock( TOP )
 	self.SearchBox:DockMargin( 0,0,0,0 )
-	self.SearchBox:SetValue( "Search..." )
-	
+	self.SearchBox:SetPlaceholderText("Search...")
+
 	local clearsearch = vgui.Create( "DImageButton", self.SearchBox )
 	clearsearch:SetMaterial( "icon16/cross.png" )
 	local src = self.SearchBox
 	function clearsearch:DoClick()
 		src:SetValue( "" )
 		src:OnEnter()
-		src:SetValue( "Search..." )
 	end
 	clearsearch:DockMargin( 2,2,4,2 )
 	clearsearch:Dock( RIGHT )
 	clearsearch:SetSize( 14, 10 )
 	clearsearch:SetVisible( false )
-	
-	
-	local old = self.SearchBox.OnGetFocus
-	function self.SearchBox:OnGetFocus()
-		if self:GetValue() == "Search..." then -- If "Search...", erase it
-			self:SetValue( "" )
-		end
-		old( self )
-	end
-	
-	-- On lose focus
-	local old = self.SearchBox.OnLoseFocus
-	function self.SearchBox:OnLoseFocus()
-		if self:GetValue() == "" then -- if empty, reset "Search..." text
-			timer.Simple( 0, function() self:SetValue( "Search..." ) end )
-		end
-		old( self )
-	end
-	
+
 	function self.SearchBox.OnEnter()
 		local str = self.SearchBox:GetValue()
-		
+
 		if str ~= "" then
 			self:StartSearch( string.Replace( string.lower( str ), " ", "_" ) )
-			
+
 			clearsearch:SetVisible( true )
 		else
 			timer.Remove( "wire_expression2_search" )
@@ -229,12 +193,13 @@ function PANEL:Init()
 		Derma_StringRequestNoBlur("Rename File \"" .. fname .. "\"", "Rename file " .. fname, fname,
 			function(strTextOut)
 			-- Renaming starts in the garrysmod folder now, in comparison to other commands that start in the data folder.
-				strTextOut = string.gsub(strTextOut, ".", invalid_filename_chars)
-
-				local contents = file.Read(self.File:GetFileName())
-				file.Delete(self.File:GetFileName())
-				file.Write(string.GetPathFromFilename(self.File:GetFileName()) .. "/" .. strTextOut .. ".txt", contents)
-
+				strTextOut = string.gsub(strTextOut, ".", invalid_filename_chars) .. ".txt"
+				local newFileName = string.GetPathFromFilename(self.File:GetFileName()) .. "/" .. strTextOut
+				if file.Exists(newFileName, "DATA") then
+					WireLib.AddNotify("File already exists (" .. strTextOut .. ")", NOTIFY_ERROR, 7, NOTIFYSOUND_ERROR1)
+				elseif not file.Rename(self.File:GetFileName(), newFileName) then
+					WireLib.AddNotify("Rename was not successful", NOTIFY_ERROR, 7, NOTIFYSOUND_ERROR1)
+				end
 				self:UpdateFolders()
 			end)
 	end)
@@ -257,10 +222,12 @@ function PANEL:Init()
 			end)
 	end)
 	self:AddRightClick(self.filemenu, nil, "Delete", function()
-		Derma_Query("Delete this file?", "Delete",
+		local filePath = self.File:GetFileName()
+
+		Derma_Query("Delete this file?\n\n" .. fileName(filePath), "Delete",
 			"Delete", function()
-				if (file.Exists(self.File:GetFileName(), "DATA")) then
-					file.Delete(self.File:GetFileName())
+				if (file.Exists(filePath, "DATA")) then
+					file.Delete(filePath)
 					self:UpdateFolders()
 				end
 			end,
@@ -283,6 +250,31 @@ function PANEL:Init()
 				self:UpdateFolders()
 			end)
 	end)
+	self:AddRightClick(self.foldermenu, nil, "Rename to..", function()
+		--get full path and remove the current folder name
+		local fullpath = string.Split(self.File:GetFolder(),"/")
+		local oldFolderName = table.remove(fullpath)
+
+		Derma_StringRequestNoBlur("Rename folder \"" .. self.File:GetFolder() .. "\"", "Rename Folder", oldFolderName,
+			function(strTextOut)
+				-- Renaming starts in the garrysmod folder now, in comparison to other commands that start in the data folder.
+				strTextOut = string.gsub(strTextOut, ".", invalid_filename_chars)
+
+				--we are editing the root folder ("expression2" folder node)
+				if #fullpath == 0 or #strTextOut == 0 then
+					return
+				end
+
+				local newFolderPath = table.concat(fullpath,"/") .. "/" .. strTextOut
+				if file.Exists(newFolderPath, "DATA") then
+					WireLib.AddNotify("Folder already exists (" .. strTextOut .. ")", NOTIFY_ERROR, 7, NOTIFYSOUND_ERROR1)
+				elseif not file.Rename(self.File:GetFolder(), newFolderPath) then
+					WireLib.AddNotify("Rename was not successful", NOTIFY_ERROR, 7, NOTIFYSOUND_ERROR1)
+				end
+				self:UpdateFolders()
+			end)
+	end)
+
 	self:AddRightClick(self.panelmenu, nil, "New File..", function()
 		Derma_StringRequestNoBlur("New File in \"" .. self.File:GetFolder() .. "\"", "Create new file", "",
 			function(strTextOut)
@@ -310,7 +302,7 @@ function PANEL:UpdateFolders( empty )
 	if IsValid(self.Root) then
 		self.Root:Remove()
 	end
-	
+
 	if not empty then
 		self.Root = self.Folders.RootNode:AddFolder(self.startfolder, self.startfolder, "DATA", true)
 		self.Root:SetExpanded(true)

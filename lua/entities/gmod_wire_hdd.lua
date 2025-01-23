@@ -17,7 +17,7 @@ function ENT:Initialize()
 	self:SetSolid(SOLID_VPHYSICS)
 	self:SetUseType(SIMPLE_USE)
 
-	self.Outputs = Wire_CreateOutputs(self, { "Data" })
+	self.Outputs = Wire_CreateOutputs(self, { "Data", "Capacity", "DriveID" })
 	self.Inputs = Wire_CreateInputs(self, { "Clk", "AddrRead", "AddrWrite", "Data" })
 
 	self.Clk = 0
@@ -53,6 +53,8 @@ function ENT:Setup(DriveID, DriveCap)
 	self.DriveID = DriveID
 	self.DriveCap = DriveCap
 	self:UpdateCap()
+	self:SetOverlayText(self.DriveCap.."kb".."\nWriteAddr:"..self.AWrite.."  Data:"..self.Data.."  Clock:"..self.Clk.."\nReadAddr:"..self.ARead.." = ".. self.Out)
+	Wire_TriggerOutput(self, "DriveID", self.DriveID)
 end
 
 function ENT:GetStructName(name)
@@ -92,6 +94,8 @@ function ENT:GetCap()
 	if (not game.SinglePlayer()) and (self.DriveCap > 256) then
 		self.DriveCap = 256
 	end
+
+	Wire_TriggerOutput(self, "Capacity", self.DriveCap)
 end
 
 function ENT:UpdateCap()
@@ -136,8 +140,9 @@ function ENT:MakeFloatTable(Table)
 end
 
 function ENT:ReadCell(Address)
+	Address = math.floor(Address)
 	--DriveID should be > 0, and less than  4 in MP
-	if ((self.DriveID < 0) || (!game.SinglePlayer() && (self.DriveID >= 4))) then
+	if ((self.DriveID < 0) or (not game.SinglePlayer() and (self.DriveID >= 4))) then
 		return nil
 	end
 
@@ -194,8 +199,9 @@ function ENT:ReadCell(Address)
 end
 
 function ENT:WriteCell(Address, value)
+	Address = math.floor(Address)
 	--DriveID should be > 0, and less than  4 in MP
-	if ((self.DriveID < 0) || (!game.SinglePlayer() && (self.DriveID >= 4))) then
+	if ((self.DriveID < 0) or (not game.SinglePlayer() and (self.DriveID >= 4))) then
 		return false
 	end
 

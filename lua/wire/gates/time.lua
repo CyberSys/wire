@@ -6,6 +6,7 @@ GateActions("Time")
 
 GateActions["accumulator"] = {
 	name = "Accumulator",
+	description = "Counts time while A is set and Hold is not set.",
 	inputs = { "A", "Hold", "Reset" },
 	timed = true,
 	output = function(gate, A, Hold, Reset)
@@ -29,6 +30,7 @@ GateActions["accumulator"] = {
 
 GateActions["smoother"] = {
 	name = "Smoother",
+	description = "Smooths the change in a number.",
 	inputs = { "A", "Rate" },
 	timed = true,
 	output = function(gate, A, Rate)
@@ -53,6 +55,7 @@ GateActions["smoother"] = {
 
 GateActions["timer"] = {
 	name = "Timer",
+	description = "Counts time upward while Run is set.",
 	inputs = { "Run", "Reset" },
 	timed = true,
 	output = function(gate, Run, Reset)
@@ -76,6 +79,7 @@ GateActions["timer"] = {
 
 GateActions["ostime"] = {
 	name = "OS Time",
+	description = "Outputs the time of day on the server in seconds.",
 	inputs = { },
 	timed = true,
 	output = function(gate)
@@ -88,6 +92,7 @@ GateActions["ostime"] = {
 
 GateActions["osdate"] = {
 	name = "OS Date",
+	description = "Outputs the date on the server in days.",
 	inputs = { },
 	timed = true,
 	output = function(gate)
@@ -100,6 +105,7 @@ GateActions["osdate"] = {
 
 GateActions["pulser"] = {
 	name = "Pulser",
+	description = "Activates for one tick every TickTime while Run is set.",
 	inputs = { "Run", "Reset", "TickTime" },
 	timed = true,
 	output = function(gate, Run, Reset, TickTime)
@@ -127,6 +133,7 @@ GateActions["pulser"] = {
 
 GateActions["squarepulse"] = {
 	name = "Square Pulse",
+	description = "Outputs Max during the PulseTime, Min during the GapTime, while Run is set.",
 	inputs = { "Run", "Reset", "PulseTime", "GapTime", "Min", "Max" },
 	timed = true,
 	output = function(gate, Run, Reset, PulseTime, GapTime, Min, Max)
@@ -157,38 +164,36 @@ GateActions["squarepulse"] = {
 
 GateActions["sawpulse"] = {
 	name = "Saw Pulse",
+	description = "Outputs a value that linearly increases to Max and decreases to Min while Run is set.",
 	inputs = { "Run", "Reset", "SlopeRaiseTime", "PulseTime", "SlopeDescendTime", "GapTime", "Min", "Max" },
 	timed = true,
 	output = function(gate, Run, Reset, SlopeRaiseTime, PulseTime, SlopeDescendTime, GapTime, Min, Max)
 		local DeltaTime = CurTime()-(gate.PrevTime or CurTime())
 		gate.PrevTime = (gate.PrevTime or CurTime())+DeltaTime
 
-		if (Reset > 0) then
+		if Reset > 0 then
 			gate.Accum = 0
-		elseif (Run > 0) then
-			local val = Min
-			gate.Accum = gate.Accum+DeltaTime
-			if (gate.Accum >= 0) && (gate.Accum < SlopeRaiseTime) then
-				if (SlopeRaiseTime != 0) then
-					val = Min + (Max-Min) * (gate.Accum-0) / SlopeRaiseTime
-				end
-			end
-			if (gate.Accum >= SlopeRaiseTime) && (gate.Accum < SlopeRaiseTime+PulseTime) then
-				return Max
-			end
-			if (gate.Accum >= SlopeRaiseTime+PulseTime) && (gate.Accum < SlopeRaiseTime+PulseTime+SlopeDescendTime) then
-				if (SlopeDescendTime != 0) then
-					val = Min + (Max-Min) * (gate.Accum-SlopeRaiseTime+PulseTime) / SlopeDescendTime
-				end
-			end
-			if (gate.Accum >= SlopeRaiseTime+PulseTime+SlopeDescendTime) then
-			end
-			if (gate.Accum >= SlopeRaiseTime+PulseTime+SlopeDescendTime+GapTime) then
-				gate.Accum = 0
-			end
-			return val
+			return Min
 		end
-		return Min
+		if Run <= 0 then
+			return Min
+		end
+
+		SlopeRaiseTime = math.max(SlopeRaiseTime, 0)
+		PulseTime = math.max(PulseTime, 0)
+		SlopeDescendTime = math.max(SlopeDescendTime, 0)
+		GapTime = math.max(GapTime, 0)
+
+		gate.Accum = (gate.Accum + DeltaTime) % (SlopeRaiseTime + PulseTime + SlopeDescendTime + GapTime)
+		if gate.Accum < SlopeRaiseTime then
+			return Min + (Max - Min) * gate.Accum / SlopeRaiseTime
+		elseif gate.Accum < SlopeRaiseTime + PulseTime then
+			return Max
+		elseif gate.Accum < SlopeRaiseTime + PulseTime + SlopeDescendTime then
+			return Max + (Min - Max) * (gate.Accum - SlopeRaiseTime - PulseTime) / SlopeDescendTime
+		else
+			return Min
+		end
 	end,
 	reset = function(gate)
 		gate.PrevTime = CurTime()
@@ -202,6 +207,7 @@ GateActions["sawpulse"] = {
 
 GateActions["derive"] = {
 	name = "Derivative",
+	description = "Outputs the rate of change (derivative) of the number.",
 	inputs = {"A"},
 	timed = false,
 	output = function(gate, A)
@@ -210,7 +216,7 @@ GateActions["derive"] = {
 		gate.LastT = t
 		local dA = A - gate.LastA
 		gate.LastA = A
-		if (dT != 0) then
+		if dT ~= 0 then
 			return dA/dT
 		else
 			return 0;
@@ -227,6 +233,7 @@ GateActions["derive"] = {
 
 GateActions["delay"] = {
 	name = "Delay",
+	description = "Holds an output of 1 for Hold seconds after Delay seconds on Clk.",
 	inputs = { "Clk", "Delay", "Hold", "Reset" },
 	outputs = { "Out", "TimeElapsed", "Remaining" },
 	timed = true,
@@ -281,6 +288,7 @@ GateActions["delay"] = {
 
 GateActions["monostable"] = {
 	name = "Monostable Timer",
+	description = "Outputs 1 for Time duration and resets to 0 for a tick in between.",
 	inputs = { "Run", "Time", "Reset" },
 	timed = true,
 	output = function(gate, Run, Time, Reset)
@@ -288,7 +296,7 @@ GateActions["monostable"] = {
 		gate.PrevTime = (gate.PrevTime or CurTime())+DeltaTime
 		if ( Reset > 0 ) then
 			gate.Accum = 0
-		elseif ( gate.Accum > 0 || Run > 0 ) then
+		elseif gate.Accum > 0 or Run > 0 then
 			gate.Accum = gate.Accum+DeltaTime
 			if(gate.Accum > Time) then
 				gate.Accum = 0

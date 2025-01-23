@@ -9,6 +9,7 @@ function ENT:SetupDataTables()
 	self:NetworkVar( "Bool",  0, "ShowBeam" )
 	self:NetworkVar( "Float", 1, "SkewX" )
 	self:NetworkVar( "Float", 2, "SkewY" )
+	self:NetworkVar( "Vector", 0, "Target" )
 end
 
 if CLIENT then return end -- No more client
@@ -19,35 +20,39 @@ function ENT:Initialize()
 	self:SetSolid( SOLID_VPHYSICS )
 	self:StartMotionController()
 
-	self.Inputs = WireLib.CreateInputs(self, { "X", "Y", "SelectValue","Length"})
+	self.Inputs = WireLib.CreateInputs(self, {
+		"X", "Y", "SelectValue", "Length",
+		"Target [VECTOR]",
+		"Ignore (Adds all specified entities to the ranger's filter.\nKeep in mind that this filtering is not synced to the client and is therefore not visible in the ranger's beam.) [ARRAY]"
+	})
 	self.Outputs = WireLib.CreateOutputs(self, { "Dist" })
 	self.hires = false
 end
 
 function ENT:Setup( range, default_zero, show_beam, ignore_world, trace_water, out_dist, out_pos, out_vel, out_ang, out_col, out_val, out_sid, out_uid, out_eid, out_hnrm, hiRes )
 	--for duplication
-	self.default_zero   = default_zero
-	self.show_beam      = show_beam
-	self.ignore_world   = ignore_world
-	self.trace_water    = trace_water
-	self.out_dist       = out_dist
-	self.out_pos        = out_pos
-	self.out_vel        = out_vel
-	self.out_ang        = out_ang
-	self.out_col        = out_col
-	self.out_val        = out_val
-	self.out_sid        = out_sid
-	self.out_uid        = out_uid
-	self.out_eid        = out_eid
-	self.out_hnrm       = out_hnrm
-	self.hires          = hiRes
+	self.default_zero = default_zero
+	self.show_beam = show_beam
+	self.ignore_world = ignore_world
+	self.trace_water = trace_water
+	self.out_dist = out_dist
+	self.out_pos = out_pos
+	self.out_vel = out_vel
+	self.out_ang = out_ang
+	self.out_col = out_col
+	self.out_val = out_val
+	self.out_sid = out_sid
+	self.out_uid = out_uid
+	self.out_eid = out_eid
+	self.out_hnrm = out_hnrm
+	self.hires = hiRes
 
 	self.PrevOutput = nil
 
-	if range then self:SetBeamLength(math.min(range, 50000)) end
+	if range then self:SetBeamLength(math.min(range, 64000)) end
 	if show_beam ~= nil then self:SetShowBeam(show_beam) end
 
-	self:SetNetworkedBool("TraceWater", trace_water)
+	self:SetNWBool("TraceWater", trace_water)
 
 	local onames, otypes = {}, {}
 
@@ -62,7 +67,7 @@ function ENT:Setup( range, default_zero, show_beam, ignore_world, trace_water, o
 
 
 	if (out_dist) then add("Dist","NORMAL") end
-	if (out_pos) then 
+	if (out_pos) then
 		add("Pos", "VECTOR",
 			"Pos X", "NORMAL",
 			"Pos Y", "NORMAL",
@@ -100,8 +105,8 @@ function ENT:Setup( range, default_zero, show_beam, ignore_world, trace_water, o
 	add( "RangerData", "RANGER" )
 	WireLib.AdjustSpecialOutputs(self, onames, otypes)
 
-	self:TriggerOutput(0, Vector(0, 0, 0), Vector(0, 0, 0), Angle(0, 0, 0), Color(255, 255, 255, 255),nil,0,0,NULL, Vector(0, 0, 0),nil)
-	self:ShowOutput(0, Vector(0, 0, 0), Vector(0, 0, 0), Angle(0, 0, 0), Color(255, 255, 255, 255),nil,0,0,NULL, Vector(0, 0, 0),nil)
+	self:TriggerOutput(0, Vector(0, 0, 0), Vector(0, 0, 0), Angle(0, 0, 0), Color(255, 255, 255, 255),nil,"",0,NULL, Vector(0, 0, 0),nil)
+	self:ShowOutput(0, Vector(0, 0, 0), Vector(0, 0, 0), Angle(0, 0, 0), Color(255, 255, 255, 255),nil,"",0,NULL, Vector(0, 0, 0),nil)
 end
 
 function ENT:TriggerInput(iname, value)
@@ -110,16 +115,28 @@ function ENT:TriggerInput(iname, value)
 	elseif (iname == "Y") then
 		self:SetSkewY(value)
 	elseif (iname == "Length") then
-		self:SetBeamLength(self.show_beam and math.min(value, 2000) or 0)
+		self:SetBeamLength(math.min(value, 64000))
+	elseif (iname == "Target") then
+		self:SetTarget(value)
+	elseif (iname == "Ignore") then
+		self.ignore = { self }
+		for k,v in ipairs(value) do
+			if IsEntity(v) and IsValid(v) then
+				self.ignore[#self.ignore+1] = v
+			end
+		end
 	end
 end
 
 function ENT:Think()
-	self.BaseClass.Think(self)
+	BaseClass.Think(self)
 
 	local tracedata = {}
 	tracedata.start = self:GetPos()
-	if (self.Inputs.X.Value == 0 and self.Inputs.Y.Value == 0) then
+	if self.Inputs.Target.Value ~= vector_origin then
+		tracedata.endpos = self:GetPos()+(self:GetTarget()-self:GetPos()):GetNormalized()*self:GetBeamLength()
+		if tracedata.endpos[1] ~= tracedata.endpos[1] then tracedata.endpos = self:GetPos()+Vector(self:GetBeamLength(), 0, 0) end
+	elseif (self.Inputs.X.Value == 0 and self.Inputs.Y.Value == 0) then
 		tracedata.endpos = tracedata.start + self:GetUp() * self:GetBeamLength()
 	else
 		local skew = Vector(self.Inputs.X.Value, self.Inputs.Y.Value, 1)
@@ -129,7 +146,7 @@ function ENT:Think()
 		local beam_z = self:GetUp()*skew.z
 		tracedata.endpos = tracedata.start + beam_x + beam_y + beam_z
 	end
-	tracedata.filter = { self }
+	tracedata.filter = self.ignore or { self }
 	if (self.trace_water) then tracedata.mask = -1 end
 	local trace = util.TraceLine(tracedata)
 	trace.RealStartPos = tracedata.start
@@ -165,7 +182,7 @@ function ENT:Think()
 			if (self.out_val and ent.Outputs) then
 				local i = 1
 				for k,v in pairs(ent.Outputs) do
-					if (v.Value != nil and type(v.Value) == "number") then
+					if (v.Value ~= nil and type(v.Value) == "number") then
 						val[i] = v.Value
 						i = i + 1
 					end

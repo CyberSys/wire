@@ -11,17 +11,17 @@ function ENT:Initialize()
 	self:SetSolid(SOLID_VPHYSICS)
 
 	self.DiskMemory = {}
-	self.Precision = 1 //1 unit
-	self.IRadius = 12 //units
+	self.Precision = 1 --1 unit
+	self.IRadius = 12 --units
 
-	//Use Z axis for Sector address
-	//Use XY radius for Track address
-	//Use Z height for Stack address
+	--Use Z axis for Sector address
+	--Use XY radius for Track address
+	--Use Z height for Stack address
 	self:Setup()
 end
 
 function ENT:BuildDupeInfo()
-	local info = self.BaseClass.BuildDupeInfo(self) or {}
+	local info = BaseClass.BuildDupeInfo(self) or {}
 
 	info.Precision = self.Precision
 	info.IRadius = self.IRadius
@@ -33,7 +33,7 @@ function ENT:BuildDupeInfo()
 		info["DiskMemory"][k] = dataptr
 		info["DiskData"..dataptr] = {}
 		for k2,v2 in pairs(self.DiskMemory[k]) do
-			info["DiskData"..dataptr][k2] = v2
+			info["DiskData"..dataptr][k2] = isnumber(v2) and v2 or 0
 		end
 		dataptr = dataptr + 1
 	end
@@ -43,7 +43,7 @@ end
 
 
 function ENT:ApplyDupeInfo(ply, ent, info, GetEntByID)
-	self.BaseClass.ApplyDupeInfo(self, ply, ent, info, GetEntByID)
+	BaseClass.ApplyDupeInfo(self, ply, ent, info, GetEntByID)
 
 	self.Precision = info.Precision
 	self.IRadius = info.IRadius
@@ -54,7 +54,7 @@ function ENT:ApplyDupeInfo(ply, ent, info, GetEntByID)
 		local dataptr = info["DiskMemory"][k]
 			self.DiskMemory[k] = {}
 		for k2,v2 in pairs(info["DiskData"..dataptr]) do
-			self.DiskMemory[k][k2] = v2
+			self.DiskMemory[k][k2] = isnumber(v2) and v2 or 0
 		end
 	end
 
@@ -83,16 +83,16 @@ function ENT:Setup(precision, iradius, skin)
 	end
 
 	self.DiskVolume = self.DiskSectors*self.DiskStacks
-	self.BytesPerBlock = 512//*self.Precision
+	self.BytesPerBlock = 512--*self.Precision
 	self.DiskSize = self.DiskSectors*self.BytesPerBlock
 
-//	print("Precision: "..(self.Precision))
-//	print("H: "..(max.z - min.z))
-//	print("R: "..(0.5*((max.x - min.x)^2+(max.y - min.y)^2)^0.5))
-//	print("Disk stacks: "..self.DiskStacks)
-//	print("Disk tracks: "..self.DiskTracks)
-//	print("Disk sectors total: "..self.DiskSectors)
-//	print("Disk volume "..self.DiskVolume)
+--	print("Precision: "..(self.Precision))
+--	print("H: "..(max.z - min.z))
+--	print("R: "..(0.5*((max.x - min.x)^2+(max.y - min.y)^2)^0.5))
+--	print("Disk stacks: "..self.DiskStacks)
+--	print("Disk tracks: "..self.DiskTracks)
+--	print("Disk sectors total: "..self.DiskSectors)
+--	print("Disk volume "..self.DiskVolume)
 
 	self:ShowOutput()
 end

@@ -6,6 +6,7 @@ GateActions("Memory")
 
 GateActions["latch"] = {
 	name = "Latch (Edge triggered)",
+	description = "Updates its value to Data when Clk changes and is greater than 0.",
 	inputs = { "Data", "Clk" },
 	output = function(gate, Data, Clk)
 		local clk = (Clk > 0)
@@ -28,6 +29,7 @@ GateActions["latch"] = {
 
 GateActions["dlatch"] = {
 	name = "D-Latch",
+	description = "Updates its value to Data when Clk is greater than 0.",
 	inputs = { "Data", "Clk" },
 	output = function(gate, Data, Clk)
 		if (Clk > 0) then
@@ -45,6 +47,7 @@ GateActions["dlatch"] = {
 
 GateActions["srlatch"] = {
 	name = "SR-Latch",
+	description = "Outputs 1 when set (S) until it gets reset (R).",
 	inputs = { "S", "R" },
 	output = function(gate, S, R)
 		if (S > 0) and (R <= 0) then
@@ -64,6 +67,7 @@ GateActions["srlatch"] = {
 
 GateActions["rslatch"] = {
 	name = "RS-Latch",
+	description = "Outputs 1 when set (S) and not reset (R).",
 	inputs = { "S", "R" },
 	output = function(gate, S, R)
 		if (S > 0) and (R < 1) then
@@ -83,6 +87,7 @@ GateActions["rslatch"] = {
 
 GateActions["toggle"] = {
 	name = "Toggle (Edge triggered)",
+	description = "Toggles its output between two values when Clk changes.",
 	inputs = { "Clk", "OnValue", "OffValue" },
 	output = function(gate, Clk, OnValue, OffValue)
 		local clk = (Clk > 0)
@@ -157,14 +162,14 @@ GateActions["ram8"] = {
 		"\nReadAddr:"..AddrRead.." = "..Out
 	end,
 	ReadCell = function(dummy,gate,Address)
-		if (Address < 0) || (Address >= 8) then
+		if (Address < 0) or (Address >= 8) then
 			return 0
 		else
 			return gate.LatchStore[Address] or 0
 		end
 	end,
 	WriteCell = function(dummy,gate,Address,value)
-		if (Address < 0) || (Address >= 8) then
+		if (Address < 0) or (Address >= 8) then
 			return false
 		else
 			gate.LatchStore[Address] = value
@@ -198,14 +203,14 @@ GateActions["ram64"] = {
 			"\nReadAddr:"..AddrRead.." = "..Out
 	end,
 	ReadCell = function(dummy,gate,Address)
-		if (Address < 0) || (Address >= 64) then
+		if (Address < 0) or (Address >= 64) then
 			return 0
 		else
 			return gate.LatchStore[Address] or 0
 		end
 	end,
 	WriteCell = function(dummy,gate,Address,value)
-		if (Address < 0) || (Address >= 64) then
+		if (Address < 0) or (Address >= 64) then
 			return false
 		else
 			gate.LatchStore[Address] = value
@@ -239,14 +244,14 @@ GateActions["ram1k"] = {
 			"\nReadAddr:"..AddrRead.." = "..Out
 	end,
 	ReadCell = function(dummy,gate,Address)
-		if (Address < 0) || (Address >= 1024) then
+		if (Address < 0) or (Address >= 1024) then
 			return 0
 		else
 			return gate.LatchStore[Address] or 0
 		end
 	end,
 	WriteCell = function(dummy,gate,Address,value)
-		if (Address < 0) || (Address >= 1024) then
+		if (Address < 0) or (Address >= 1024) then
 			return false
 		else
 			gate.LatchStore[Address] = value
@@ -280,14 +285,14 @@ GateActions["ram32k"] = {
 			"\nReadAddr:"..AddrRead.." = "..Out
 	end,
 	ReadCell = function(dummy,gate,Address)
-		if (Address < 0) || (Address >= 32768) then
+		if (Address < 0) or (Address >= 32768) then
 			return 0
 		else
 			return gate.LatchStore[Address] or 0
 		end
 	end,
 	WriteCell = function(dummy,gate,Address,value)
-		if (Address < 0) || (Address >= 32768) then
+		if (Address < 0) or (Address >= 32768) then
 			return false
 		else
 			gate.LatchStore[Address] = value
@@ -321,14 +326,14 @@ GateActions["ram128k"] = {
 			"\nReadAddr:"..AddrRead.." = "..Out
 	end,
 	ReadCell = function(dummy,gate,Address)
-		if (Address < 0) || (Address >= 131072) then
+		if (Address < 0) or (Address >= 131072) then
 			return 0
 		else
 			return gate.LatchStore[Address] or 0
 		end
 	end,
 	WriteCell = function(dummy,gate,Address,value)
-		if (Address < 0) || (Address >= 131072) then
+		if (Address < 0) or (Address >= 131072) then
 			return false
 		else
 			gate.LatchStore[Address] = value
@@ -369,14 +374,14 @@ GateActions["ram64x64"] = {
 		"\nReadAddr:"..AddrReadX..", "..AddrReadY.." = "..Out
 	end,
 	ReadCell = function(dummy,gate,Address)
-		if (Address < 0) || (Address >= 4096) then
+		if (Address < 0) or (Address >= 4096) then
 			return 0
 		else
 			return gate.LatchStore[Address] or 0
 		end
 	end,
 	WriteCell = function(dummy,gate,Address,value)
-		if (Address < 0) || (Address >= 4096) then
+		if (Address < 0) or (Address >= 4096) then
 			return false
 		else
 			gate.LatchStore[Address] = value
@@ -387,16 +392,17 @@ GateActions["ram64x64"] = {
 
 GateActions["udcounter"] = {
 	name = "Up/Down Counter",
+	description = "Increases or decreases on Clk.",
 	inputs = { "Increment", "Decrement", "Clk", "Reset"},
 	output = function(gate, Inc, Dec, Clk, Reset)
 		local lInc = (Inc > 0)
 		local lDec = (Dec > 0)
 		local lClk = (Clk > 0)
 		local lReset = (Reset > 0)
-		if ((gate.PrevInc ~= lInc || gate.PrevDec ~= lDec || gate.PrevClk ~= lClk) && lClk) then
-			if (lInc) and (!lDec) and (!lReset) then
+		if ((gate.PrevInc ~= lInc or gate.PrevDec ~= lDec or gate.PrevClk ~= lClk) and lClk) then
+			if (lInc) and (not lDec) and (not lReset) then
 				gate.countStore = (gate.countStore or 0) + 1
-			elseif (!lInc) and (lDec) and (!lReset) then
+			elseif (not lInc) and (lDec) and (not lReset) then
 				gate.countStore = (gate.countStore or 0) - 1
 			end
 			gate.PrevInc = lInc
@@ -415,6 +421,7 @@ GateActions["udcounter"] = {
 
 GateActions["togglewhile"] = {
 	name = "Toggle While(Edge triggered)",
+	description = "Toggles its output between two values when Clk changes and While is nonzero.",
 	inputs = { "Clk", "OnValue", "OffValue", "While" },
 	output = function(gate, Clk, OnValue, OffValue, While)
 		local clk = (Clk > 0)

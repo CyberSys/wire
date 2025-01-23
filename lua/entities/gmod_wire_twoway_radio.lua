@@ -30,15 +30,21 @@ function ENT:Setup()
 	Wire_TriggerOutput(self, "D", self.Outputs.D.Value or 0)
 end
 
+local radio_twowaycounter = 0
+function ENT:GetTwoWayID()
+	radio_twowaycounter = radio_twowaycounter + 1
+	return radio_twowaycounter
+end
+
 function ENT:TriggerInput(iname, value)
-	if (self.Other) and (self.Other:IsValid()) then
+	if self.Other and self.Other:IsValid() and self.Other.Inputs then
 		self.Other:ReceiveRadio(iname, value)
 		self:ShowOutput("update", 1)
 	end
 end
 
 function ENT:Think()
-	self.BaseClass.Think(self)
+	BaseClass.Think(self)
 
 	if (not self.Other) or (not self.Other:IsValid()) then
 		self.Other = nil
@@ -84,8 +90,8 @@ function ENT:LinkEnt( other )
 		--to a different one, then tell it to unlink
 		self.Other.UnlinkEnt()
 	end
-	
-	local id = Radio_GetTwoWayID()
+
+	local id = self:GetTwoWayID()
 	self:RadioLink(other, id)
 	other:RadioLink(self, id)
 	WireLib.AddNotify(self:GetPlayer(), "The Radios are now paired. Pair ID is " .. tostring(id) .. ".", NOTIFY_GENERIC, 7)
@@ -138,7 +144,7 @@ function ENT:ShowOutput(iname, value)
 end
 
 function ENT:OnRestore()
-	self.BaseClass.OnRestore(self)
+	BaseClass.OnRestore(self)
 
 	Wire_AdjustInputs(self, { "A", "B", "C", "D" })
 	Wire_AdjustOutputs(self, { "A", "B", "C", "D" })
@@ -146,9 +152,9 @@ end
 
 // Dupe info functions added by TheApathetic
 function ENT:BuildDupeInfo()
-	local info = self.BaseClass.BuildDupeInfo(self) or {}
+	local info = BaseClass.BuildDupeInfo(self) or {}
 
-	if (self.Other) && (self.Other:IsValid()) then
+	if (self.Other) and (self.Other:IsValid()) then
 		info.Other = self.Other:EntIndex()
 	end
 
@@ -156,7 +162,7 @@ function ENT:BuildDupeInfo()
 end
 
 function ENT:ApplyDupeInfo(ply, ent, info, GetEntByID)
-	self.BaseClass.ApplyDupeInfo(self, ply, ent, info, GetEntByID)
+	BaseClass.ApplyDupeInfo(self, ply, ent, info, GetEntByID)
 
 	local other = GetEntByID(info.Other)
 	if IsValid(other) then
@@ -164,7 +170,7 @@ function ENT:ApplyDupeInfo(ply, ent, info, GetEntByID)
 		-- interference with current two-way radios
 		-- This works because ApplyDupeInfo is called after
 		-- all entities are already pasted (TheApathetic)
-		local id = other.PairID or Radio_GetTwoWayID()
+		local id = other.PairID or self:GetTwoWayID()
 		self:RadioLink(other, id)
 	end
 end

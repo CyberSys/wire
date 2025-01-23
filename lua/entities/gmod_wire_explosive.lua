@@ -5,6 +5,9 @@ ENT.WireDebugName 	= "Explosive"
 
 if CLIENT then return end -- No more client
 
+local wire_explosive_delay = CreateConVar( "wire_explosive_delay", 0.2, FCVAR_ARCHIVE )
+local wire_explosive_range = CreateConVar( "wire_explosive_range", 512, FCVAR_ARCHIVE )
+
 function ENT:Initialize()
 
 	self:PhysicsInit( SOLID_VPHYSICS )
@@ -33,7 +36,7 @@ end
 
 function ENT:TriggerInput(iname, value)
 	if (iname == "Detonate") then
-		if ( !self.exploding && !self.reloading ) then
+		if ( not self.exploding and not self.reloading ) then
 			if ( math.abs(value) == self.key ) then
 				self:Trigger()
 			end
@@ -44,12 +47,12 @@ function ENT:TriggerInput(iname, value)
 end
 
 function ENT:Setup( key, damage, delaytime, removeafter, radius, affectother, notaffected, delayreloadtime, maxhealth, bulletproof, explosionproof, fallproof, explodeatzero, resetatexplode, fireeffect, coloreffect, invisibleatzero )
-	
+
 	self.key = key
 	self.Damage = math.Clamp( damage, 0, 1500 )
 	self.Delaytime = delaytime
 	self.Removeafter = removeafter
-	self.Radius = math.min(512,math.max(radius, 1))
+	self.Radius = math.Clamp(radius, 1, wire_explosive_range:GetFloat())
 	self.Affectother = affectother
 	self.Notaffected = notaffected
 	self.Delayreloadtime = delayreloadtime
@@ -82,12 +85,12 @@ function ENT:Setup( key, damage, delaytime, removeafter, radius, affectother, no
 
 	self.NormInfo = ""
 	if (self.Damage > 0) then self.NormInfo = self.NormInfo.."Damage: "..self.Damage end
-	if (self.Radius > 0 || self.Delaytime > 0) then self.NormInfo = self.NormInfo.."\n" end
+	if (self.Radius > 0 or self.Delaytime > 0) then self.NormInfo = self.NormInfo.."\n" end
 	if (self.Radius > 0 ) then self.NormInfo = self.NormInfo.." Rad: "..self.Radius end
 	if (self.Delaytime > 0) then self.NormInfo = self.NormInfo.." Delay: "..self.Delaytime end
 
 	self:ShowOutput()
-	
+
 	local ttable = {
 		key = key,
 		damage = damage,
@@ -110,7 +113,7 @@ function ENT:Setup( key, damage, delaytime, removeafter, radius, affectother, no
 	table.Merge( self:GetTable(), ttable )
 end
 
-function ENT:ResetHealth( )
+function ENT:ResetHealth()
 	self:SetHealth( self:GetMaxHealth() )
 	Wire_TriggerOutput(self, "Health", self:GetMaxHealth())
 
@@ -129,15 +132,15 @@ end
 
 function ENT:OnTakeDamage( dmginfo )
 
-	if ( dmginfo:GetInflictor():GetClass() == "gmod_wire_explosive"  && !self.Affectother ) then return end
+	if ( dmginfo:GetInflictor():GetClass() == "gmod_wire_explosive"  and not self.Affectother ) then return end
 
-	if ( !self.Notaffected ) then self:TakePhysicsDamage( dmginfo ) end
+	if ( not self.Notaffected ) then self:TakePhysicsDamage( dmginfo ) end
 
-	if (dmginfo:IsBulletDamage() && self.BulletProof) ||
-		(dmginfo:IsExplosionDamage() && self.ExplosionProof) ||
-		(dmginfo:IsFallDamage() && self.FallProof) then return end //fix fall damage, it doesn't happen
+	if (dmginfo:IsBulletDamage() and self.BulletProof) or
+		(dmginfo:IsExplosionDamage() and self.ExplosionProof) or
+		(dmginfo:IsFallDamage() and self.FallProof) then return end --fix fall damage, it doesn't happen
 
-	if (self:Health() > 0) then //don't need to beat a dead horse
+	if (self:Health() > 0) then --don't need to beat a dead horse
 		local dammage = dmginfo:GetDamage()
 		local h = self:Health() - dammage
 		if (h < 0) then h = 0 end
@@ -159,15 +162,15 @@ end
 function ENT:Trigger()
 	if ( self.Delaytime > 0 ) then
 		self.ExplodeTime = CurTime() + self.Delaytime
-		if (self.FireEffect) then self:Ignite((self.Delaytime + 3),0) end
+		if (self.FireEffect) then self:Ignite( self.Delaytime + 3, 0 ) end
 	end
 	self.exploding = true
-	// Force reset of counter
+	-- Force reset of counter
 	self.CountTime = 0
 end
 
 function ENT:Think()
-	self.BaseClass.Think(self)
+	BaseClass.Think(self)
 
 	if (self.exploding) then
 		if (self.ExplodeTime < CurTime()) then
@@ -184,9 +187,9 @@ function ENT:Think()
 		end
 	end
 
-	// Do count check to ensure that
-	// ShowOutput() is called every second
-	// when exploding or reloading
+	-- Do count check to ensure that
+	-- ShowOutput() is called every second
+	-- when exploding or reloading
 	if ((self.CountTime or 0) < CurTime()) then
 		local temptime = 0
 		if (self.exploding) then
@@ -207,21 +210,21 @@ function ENT:Think()
 	return true
 end
 
-function ENT:Explode( )
+function ENT:Explode()
 
-	if ( !self:IsValid() ) then return end
+	if ( not self:IsValid() ) then return end
 
 	self:Extinguish()
 
-	if (!self.exploding) then return end //why are we exploding if we shouldn't be
+	if (not self.exploding) then return end --why are we exploding if we shouldn't be
 
-	ply = self:GetPlayer() or self
-	if(not IsValid(ply)) then ply = self end;
+	local ply = self:GetPlayer()
+	if not IsValid(ply) then ply = self end
 
 	if (self.InvisibleAtZero) then
-		ply:SetCollisionGroup(COLLISION_GROUP_DEBRIS)
-		ply:SetNoDraw( true )
-		ply:SetColor(Color(255, 255, 255, 0))
+		self:SetCollisionGroup(COLLISION_GROUP_DEBRIS)
+		self:SetNoDraw( true )
+		self:SetColor(Color(255, 255, 255, 0))
 	end
 
 	if ( self.Damage > 0 ) then
@@ -240,23 +243,23 @@ function ENT:Explode( )
 	self.exploding = false
 
 	self.reloading = true
-	self.ReloadTime = CurTime() + math.max(1, self.Delayreloadtime)
-	// Force reset of counter
+	self.ReloadTime = CurTime() + math.max(wire_explosive_delay:GetFloat(), self.Delayreloadtime)
+	-- Force reset of counter
 	self.CountTime = 0
 	self:ShowOutput()
 end
 
 -- don't foreget to call this when changes happen
-function ENT:ShowOutput( )
+function ENT:ShowOutput()
 	local txt = ""
-	if (self.reloading && self.Delayreloadtime > 0) then
+	if (self.reloading and self.Delayreloadtime > 0) then
 		txt = "Rearming... "..self.count
-		if (self.ColorEffect && !self.InvisibleAtZero) then
+		if (self.ColorEffect and not self.InvisibleAtZero) then
 			local c = 255 * ((self.Delayreloadtime - self.count) / self.Delayreloadtime)
 			self:SetColor(Color(255, c, c, 255))
 		end
 		if (self.InvisibleAtZero) then
-			ply:SetNoDraw( false )
+			self:SetNoDraw( false )
 			self:SetColor(Color(255, 255, 255, 255 * ((self.Delayreloadtime - self.count) / self.Delayreloadtime)))
 			self:SetRenderMode(RENDERMODE_TRANSALPHA)
 		end

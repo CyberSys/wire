@@ -39,7 +39,7 @@ e2function number isDedicated()
 end
 
 e2function number numPlayers()
-	return #player.GetAll()
+	return player.GetCount()
 end
 
 e2function number maxPlayers()
@@ -77,4 +77,8 @@ end
 
 e2function number tickInterval()
 	return engine.TickInterval()
+end
+
+e2function number tickRealInterval()
+	return engine.AbsoluteFrameTime()
 end

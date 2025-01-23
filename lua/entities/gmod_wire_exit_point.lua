@@ -5,17 +5,24 @@ ENT.PrintName		= "Wire Vehicle Exit Point"
 if CLIENT then return end -- No more client
 
 function ENT:Initialize()
-	self.BaseClass.Initialize(self)
-	
-	self.Inputs = WireLib.CreateInputs(self, {"Entity [ENTITY]", "Entities [ARRAY]", "Position [VECTOR]", "Local Position [VECTOR]", "Angle [ANGLE]", "Local Angle [ANGLE]"})
-	
+	BaseClass.Initialize(self)
+
+	self.Inputs = WireLib.CreateInputs(self, {
+		"Entity (Links the exit point controller to a single specified vehicle and unlinks all others.) [ENTITY]",
+		"Entities (Links the exit point controller to the specified array of vehicles.\nEntities will be linked one by one and this value can't be changed during this time.) [ARRAY]",
+		"Position (Whenever a player exits a linked vehicle, they will be teleported to this position.\nOnly either this or 'Local Position' can be used at a time. The last changed input is used.) [VECTOR]",
+		"Local Position (Whenever a player exits a linked vehicle, they will be teleported to this position, relative to the vehicle they just exited.\nOnly either this or 'Position' can be used at a time. The last changed input is used.) [VECTOR]",
+		"Angle (Whenever a player exits a linked vehicle, they will be rotated to face this angle.\nOnly either this or 'Local Angle' can be used at a time. The last changed input is used.) [ANGLE]",
+		"Local Angle (Whenever a player exits a linked vehicle, they will rotated to face this angle, relative to the vehicle they just exited.\nOnly either this or 'Angle' can be used at a time. The last changed input is used.) [ANGLE]"
+	})
+
 	self.Position = Vector(0,0,0)
 	self.Angle = Angle(0,0,0)
 	self.Entities = {}
 	self.Global = false
 	self.GlobalAngle = false
 	self:AddExitPoint()
-	
+
 	self:ShowOutput()
 end
 
@@ -26,11 +33,12 @@ function ENT:TriggerInput( name, value )
 			self:LinkEnt(value)
 		end
 	elseif (name == "Entities") then
-		self.Entities = {}
-		for _, ent in pairs(value) do
-			if self:CheckPP(ent) then
-				self:LinkEnt(ent)
-			end
+		if self.ToLink then return end
+		self:ClearEntities()
+		if next(value) ~= nil then
+			-- unfortunately (for our performance) copying is required here
+			self.ToLink = table.Copy(value)
+			self.ToLinkCounter = nil
 		end
 	elseif (name == "Position") then
 		self.Position = value
@@ -49,21 +57,49 @@ function ENT:TriggerInput( name, value )
 end
 
 function ENT:ShowOutput()
-	self:SetOverlayText(string.format("Entities linked: %i\n%sPosition: (%.2f, %.2f, %.2f)", table.Count(self.Entities), self.Global and "" or "Local ", self.Position.x, self.Position.y, self.Position.z))
+	self:SetOverlayText(string.format(
+		"Entities linked: %i\n%sPosition: (%.2f, %.2f, %.2f)%s",
+		table.Count(self.Entities),
+		self.Global and "" or "Local ",
+		self.Position.x, self.Position.y, self.Position.z,
+		(self.ToLink and self.ToLinkCounter) and "\nLinking " .. (#self.ToLink-self.ToLinkCounter) .. " entities..." or ""
+	))
 end
 
 function ENT:CheckPP(ent)
 	-- Check Prop Protection. Most block/allow all of CanTool, but lets check hoverdrive controller specifically, since if they can attach one to your vehicle, they can simulate this anyways
-	return IsValid(ent) and gamemode.Call("CanTool", self:GetPlayer(), WireLib.dummytrace(ent), "wire_hoverdrivecontroller")
+	return IsValid(ent) and WireLib.CanTool(self:GetPlayer(), ent, "wire_hoverdrivecontroller")
 end
 
+function ENT:Think()
+	BaseClass.Think(self)
+
+	if self.ToLink then
+		self.ToLinkCounter = (self.ToLinkCounter or 0) + 1
+		if self.ToLinkCounter > #self.ToLink then
+			self.ToLink = nil
+			self.ToLinkCounter = nil
+		else
+			local ent = self.ToLink[self.ToLinkCounter]
+
+			if self:CheckPP(ent) then
+				self:LinkEnt(ent, true)
+			end
+		end
+
+		self:ShowOutput()
+		self:SendMarks()
+		self:NextThink(CurTime()+0.1)
+		return true
+	end
+end
 
 local ExitPoints = {}
 function ENT:AddExitPoint()
 	ExitPoints[self] = true
 end
 local function RemoveExitPoint( ent )
-	if ExitPoints[self] then ExitPoints[self] = nil end
+	if ExitPoints[ent] then ExitPoints[ent] = nil end
 end
 hook.Add( "EntityRemoved", "WireExitPoint", RemoveExitPoint )
 
@@ -82,7 +118,7 @@ local function MovePlayer( ply, vehicle )
 				local LocalPosDistance = epoint.Position:Length()
 				ply:SetPos( vehicle:LocalToWorld( epoint.Position / LocalPosDistance * math.min(LocalPosDistance, math.max(0, ClampDistance:GetInt()))) + Vector(0,0,5) )
 			end
-			
+
 			if epoint.GlobalAngle then
 				ply:SetEyeAngles( Angle( epoint.Angle.p, epoint.Angle.y, 0 ) )
 			else
@@ -90,7 +126,7 @@ local function MovePlayer( ply, vehicle )
 				ang.r = 0
 				ply:SetEyeAngles( ang )
 			end
-			
+
 			return
 		end
 	end
@@ -103,22 +139,28 @@ function ENT:SendMarks()
 	WireLib.SendMarks(self, marks)
 end
 
-function ENT:LinkEnt( ent )
+function ENT:LinkEnt( ent, dontNotify )
+	ent = WireLib.GetClosestRealVehicle(ent,nil,(not dontNotify) and self:GetPlayer())
+
+	if not IsValid(ent) or not ent:IsVehicle() then return false, "Must link to a vehicle" end
 	if self.Entities[ent] then return end
 	self.Entities[ent] = true
 	ent:CallOnRemove("ExitPoint.Unlink", function(ent)
 		if IsValid(self) then self:UnlinkEnt(ent) end
 	end)
-	
-	self:SendMarks()
-	self:ShowOutput()
+
+	if not dontNotify then
+		self:SendMarks()
+		self:ShowOutput()
+	end
 	return true
 end
 
 function ENT:UnlinkEnt( ent )
 	if not self.Entities[ent] then return end
 	self.Entities[ent] = nil
-	
+	ent:RemoveCallOnRemove("ExitPoint.Unlink")
+
 	self:SendMarks()
 	self:ShowOutput()
 	return true
@@ -126,12 +168,12 @@ end
 
 function ENT:ClearEntities()
 	self.Entities = {}
-	WireLib.SendMarks(self, {})
+	self:SendMarks()
 	self:ShowOutput()
 end
 
 function ENT:BuildDupeInfo()
-	local info = self.BaseClass.BuildDupeInfo(self) or {}
+	local info = BaseClass.BuildDupeInfo(self) or {}
 
 	if next(self.Entities) then
 		info.marks = {}
@@ -144,11 +186,12 @@ function ENT:BuildDupeInfo()
 end
 
 function ENT:ApplyDupeInfo(ply, ent, info, GetEntByID)
-	self.BaseClass.ApplyDupeInfo(self, ply, ent, info, GetEntByID)
+	BaseClass.ApplyDupeInfo(self, ply, ent, info, GetEntByID)
 
 	if info.marks then
-		for _, entindex in pairs(info.marks) do
-			self:LinkEnt(GetEntByID(entindex))
+		self.ToLink = {}
+		for idx, entindex in pairs(info.marks) do
+			self.ToLink[idx] = GetEntByID(entindex)
 		end
 	end
 end

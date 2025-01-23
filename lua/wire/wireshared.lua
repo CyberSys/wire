@@ -9,23 +9,25 @@ local LocalPlayer = LocalPlayer
 local Entity = Entity
 
 local string = string
+local string_gsub = string.gsub
+local string_char = string.char
+local string_match = string.match
+local string_sub = string.sub
+local utf8_char = utf8.char
 local hook = hook
+
+MAX_EDICT_BITS = MAX_EDICT_BITS or 13 -- Delete once MAX_EDICT_BITS is fully out in base GMod
 
 -- extra table functions
 
 -- Returns a noniterable version of tbl. So indexing still works, but pairs(tbl) won't find anything
 -- Useful for hiding entity lookup tables, since Garrydupe uses util.TableToJSON, which crashes on tables with entity keys
-function table.MakeNonIterable(tbl)
+function table.MakeNonIterable(tbl) -- luacheck: ignore
     return setmetatable({}, { __index = tbl, __setindex = tbl})
 end
 
--- Checks if the table is empty, it's faster than table.Count(Table) > 0
-function table.IsEmpty(Table)
-	return (next(Table) == nil)
-end
-
 -- Compacts an array by rejecting entries according to cb.
-function table.Compact(tbl, cb, n)
+function table.Compact(tbl, cb, n) -- luacheck: ignore
 	n = n or #tbl
 	local cpos = 1
 	for i = 1, n do
@@ -35,29 +37,52 @@ function table.Compact(tbl, cb, n)
 		end
 	end
 
-	local new_n = cpos-1
 	while (cpos <= n) do
 		tbl[cpos] = nil
 		cpos = cpos + 1
 	end
 end
 
--- I don't even know if I need this one.
--- HUD indicator needs this one
-function table.MakeSortedKeys(tbl)
-	local result = {}
+-- Removes `value` from `tbl` by shifting last element of `tbl` to its place.
+-- Returns index of `value` if it was removed, nil otherwise.
+function table.RemoveFastByValue(tbl, value)
+    for i, v in ipairs(tbl) do
+        if v == value then
+            tbl[i] = tbl[#tbl]
+            tbl[#tbl] = nil
 
-	for k,_ in pairs(tbl) do table.insert(result, k) end
-	table.sort(result)
+            return i
+        end
+    end
+end
 
-	return result
+function string.GetNormalizedFilepath( path ) -- luacheck: ignore
+	local null = string.find(path, "\x00", 1, true)
+	if null then path = string.sub(path, 1, null-1) end
+
+	local tbl = string.Explode( "[/\\]+", path, true )
+	local i = 1
+	while i <= #tbl do
+		if tbl[i] == "." or tbl[i]=="" then
+			table.remove(tbl, i)
+		elseif tbl[i] == ".." then
+			table.remove(tbl, i)
+			if i>1 then
+				i = i - 1
+				table.remove(tbl, i)
+			end
+		else
+			i = i + 1
+		end
+	end
+	return table.concat(tbl, "/")
 end
 
 -- works like pairs() except that it iterates sorted by keys.
 -- criterion is optional and should be a function(a,b) returning whether a is less than b. (same as table.sort's criterions)
 function pairs_sortkeys(tbl, criterion)
-	tmp = {}
-	for k,v in pairs(tbl) do table.insert(tmp,k) end
+	local tmp = {}
+	for k, _ in pairs(tbl) do table.insert(tmp,k) end
 	table.sort(tmp, criterion)
 
 	local iter, state, index, k = ipairs(tmp)
@@ -79,9 +104,9 @@ function pairs_sortvalues(tbl, criterion)
 			return tbl[a] < tbl[b]
 		end
 
-	tmp = {}
+	local tmp = {}
 	tbl = tbl or {}
-	for k,v in pairs(tbl) do table.insert(tmp,k) end
+	for k, _ in pairs(tbl) do table.insert(tmp,k) end
 	table.sort(tmp, crit)
 
 	local iter, state, index, k = ipairs(tmp)
@@ -127,10 +152,8 @@ end
 -- end extra table functions
 
 local table = table
-local pairs_sortkeys = pairs_sortkeys
 local pairs_sortvalues = pairs_sortvalues
 local ipairs_map = ipairs_map
-local pairs_map = pairs_map
 
 --------------------------------------------------------------------------------
 
@@ -144,77 +167,13 @@ do -- containers
 	end
 
 	local function newclass(container_name)
-		meta = { new = new }
+		local meta = { new = new }
 		meta.__index = meta
 		WireLib.containers[container_name] = meta
 		return meta
 	end
 
 	WireLib.containers = { new = new, newclass = newclass }
-
-	do -- class deque
-		local deque = newclass("deque")
-
-		function deque:Initialize()
-			self.offset = 0
-		end
-
-		function deque:size()
-			return #self-self.offset
-		end
-
-		-- Prepends the given element.
-		function deque:unshift(value)
-			if offset < 1 then
-				-- TODO: improve
-				table.insert(self, 1, value)
-				return
-			end
-			self.offset = self.offset - 1
-			self[self.offset+1] = value
-		end
-
-		-- Removes the first element and returns it
-		function deque:shift()
-			--do return table.remove(self, 1) end
-			local offset = self.offset + 1
-			local ret = self[offset]
-			if not ret then self.offset = offset-1 return nil end
-			self.offset = offset
-			if offset > 127 then
-				for i = offset+1,#self-offset do
-					self[i-offset] = self[i]
-				end
-				for i = #self-offset+1,#self do
-					self[i-offset],self[i] = self[i],nil
-				end
-				self.offset = 0
-			end
-			return ret
-		end
-
-		-- Appends the given element.
-		function deque:push(value)
-			self[#self+1] = value
-		end
-
-		-- Removes the last element and returns it.
-		function deque:pop()
-			local ret = self[#self]
-			self[#self] = nil
-			return ret
-		end
-
-		-- Returns the last element.
-		function deque:top()
-			return self[#self]
-		end
-
-		-- Returns the first element.
-		function deque:bottom()
-			return self[self.offset+1]
-		end
-	end -- class deque
 
 	do -- class autocleanup
 		local autocleanup = newclass("autocleanup")
@@ -281,13 +240,12 @@ do
 	NOTIFYSOUND_CONFIRM4 = 10
 
 	if CLIENT then
-
 		local sounds = {
 			[NOTIFYSOUND_DRIP1   ] = "ambient/water/drip1.wav",
 			[NOTIFYSOUND_DRIP2   ] = "ambient/water/drip2.wav",
 			[NOTIFYSOUND_DRIP3   ] = "ambient/water/drip3.wav",
 			[NOTIFYSOUND_DRIP4   ] = "ambient/water/drip4.wav",
-			[NOTIFYSOUND_DRIP5   ] = "ambient/water/drip5.wav",
+			[NOTIFYSOUND_DRIP5   ] = "ambient/water/drip4.wav", -- Non-existent sound, left for compatibility
 			[NOTIFYSOUND_ERROR1  ] = "buttons/button10.wav",
 			[NOTIFYSOUND_CONFIRM1] = "buttons/button3.wav",
 			[NOTIFYSOUND_CONFIRM2] = "buttons/button14.wav",
@@ -301,39 +259,33 @@ do
 			elseif ply ~= LocalPlayer() then
 				return
 			end
+
 			GAMEMODE:AddNotify(Message, Type, Duration)
 			if Sound and sounds[Sound] then surface.PlaySound(sounds[Sound]) end
 		end
 
 		net.Receive("wire_addnotify", function(netlen)
 			local Message = net.ReadString()
-			local Type = net.ReadUInt(8)
+			local Type = net.ReadUInt(3)
 			local Duration = net.ReadFloat()
-			local Sound = net.ReadUInt(8)
+			local Sound = net.ReadUInt(4)
 
 			WireLib.AddNotify(LocalPlayer(), Message, Type, Duration, Sound)
 		end)
-
-	elseif SERVER then
-
-		NOTIFY_GENERIC = 0
-		NOTIFY_ERROR = 1
-		NOTIFY_UNDO = 2
-		NOTIFY_HINT = 3
-		NOTIFY_CLEANUP = 4
-
+	else
 		util.AddNetworkString("wire_addnotify")
+
 		function WireLib.AddNotify(ply, Message, Type, Duration, Sound)
 			if isstring(ply) then ply, Message, Type, Duration, Sound = nil, ply, Message, Type, Duration end
-			if ply && !ply:IsValid() then return end
+			if ply and not ply:IsValid() then return end
+
 			net.Start("wire_addnotify")
 				net.WriteString(Message)
-				net.WriteUInt(Type or 0,8)
+				net.WriteUInt(Type or 0, 3)
 				net.WriteFloat(Duration)
-				net.WriteUInt(Sound or 0,8)
+				net.WriteUInt(Sound or 0, 4)
 			if ply then net.Send(ply) else net.Broadcast() end
 		end
-
 	end
 end -- wire_addnotify
 
@@ -476,13 +428,14 @@ end
 -- Works for every entity that has wire in-/output.
 -- Very important and useful for checks!
 function WireLib.HasPorts(ent)
-	if (ent.IsWire) then return true end
-	if (ent.Base == "base_wire_entity") then return true end
+	local entTbl = ent:GetTable()
+	if entTbl.IsWire then return true end
+	if entTbl.Base == "base_wire_entity" then return true end
 
 	-- Checks if the entity is in the list, it checks if the entity has self.in-/outputs too.
 	local In, Out = WireLib.GetPorts(ent)
-	if (In and (ent.Inputs or CLIENT)) then return true end
-	if (Out and (ent.Outputs or CLIENT)) then return true end
+	if In and (entTbl.Inputs or CLIENT) then return true end
+	if Out and (entTbl.Outputs or CLIENT) then return true end
 
 	return false
 end
@@ -508,6 +461,17 @@ if SERVER then
 		return ents_with_inputs[eid], ents_with_outputs[eid]
 	end
 
+	function WireLib.RemoveOutPort(ent, name)
+		local outputs = ents_with_outputs[ent:EntIndex()]
+		if outputs then
+			for k, v in ipairs(outputs) do
+				if v[1] == name then
+					table.remove(outputs, k)
+				end
+			end
+		end
+	end
+
 	function WireLib._RemoveWire(eid, DontSend) -- To remove the inputs without to remove the entity. Very important for IsWire checks!
 		local hasinputs, hasoutputs = ents_with_inputs[eid], ents_with_outputs[eid]
 		if hasinputs or hasoutputs then
@@ -516,7 +480,7 @@ if SERVER then
 			if not DontSend then
 				net.Start("wire_ports")
 					net.WriteInt(-3, 8) -- set eid
-					net.WriteUInt(eid, 16) -- entity id
+					net.WriteUInt(eid, MAX_EDICT_BITS) -- entity id
 					if hasinputs then net.WriteInt(-1, 8) end -- delete inputs
 					if hasoutputs then net.WriteInt(-2, 8) end -- delete outputs
 					net.WriteInt(0, 8) -- break
@@ -544,7 +508,7 @@ if SERVER then
 			ents_with_inputs[eid][#ents_with_inputs[eid]+1] = entry
 			queue[#queue+1] = { eid, PORT, INPUT, entry, CurPort.Num }
 		end
-		for Name, CurPort in pairs_sortvalues(ent.Inputs, WireLib.PortComparator) do
+		for _, CurPort in pairs_sortvalues(ent.Inputs, WireLib.PortComparator) do
 			WireLib._SetLink(CurPort, lqueue)
 		end
 	end
@@ -597,7 +561,7 @@ if SERVER then
 			eid = msg[1]
 			writeCurrentStrings() -- We're switching to talking about a different entity, lets send port information
 			net.WriteInt(-3,8)
-			net.WriteUInt(eid,16)
+			net.WriteUInt(eid,MAX_EDICT_BITS)
 		end
 
 		local msgtype = msg[2]
@@ -627,7 +591,7 @@ if SERVER then
 	end
 
 	local function FlushQueue(lqueue, ply)
-		// Zero these two for the writemsg function
+		-- Zero these two for the writemsg function
 		eid = 0
 		numports = {}
 
@@ -648,10 +612,10 @@ if SERVER then
 
 	hook.Add("PlayerInitialSpawn", "wire_ports", function(ply)
 		local lqueue = {}
-		for eid, entry in pairs(ents_with_inputs) do
+		for eid, _ in pairs(ents_with_inputs) do
 			WireLib._SetInputs(Entity(eid), lqueue)
 		end
-		for eid, entry in pairs(ents_with_outputs) do
+		for eid, _ in pairs(ents_with_outputs) do
 			WireLib._SetOutputs(Entity(eid), lqueue)
 		end
 		FlushQueue(lqueue, ply)
@@ -673,7 +637,7 @@ elseif CLIENT then
 			elseif cmd == -2 then
 				ents_with_outputs[eid] = nil
 			elseif cmd == -3 then
-				eid = net.ReadUInt(16)
+				eid = net.ReadUInt(MAX_EDICT_BITS)
 			elseif cmd == -4 then
 				connections[#connections+1] = {eid, net.ReadUInt(8), net.ReadBit() ~= 0} -- Delay this process till after the loop
 			elseif cmd > 0 then
@@ -736,13 +700,13 @@ elseif CLIENT then
 				lasteid = eid
 
 				local text = "ID "..eid.."\nInputs:\n"
-				for num,name,tp,desc,connected in ipairs_map(ents_with_inputs[eid] or {}, unpack) do
+				for _,name,tp,desc,connected in ipairs_map(ents_with_inputs[eid] or {}, unpack) do
 
 					text = text..(connected and "-" or " ")
 					text = text..string.format("%s (%s) [%s]\n", name, tp, desc)
 				end
 				text = text.."\nOutputs:\n"
-				for num,name,tp,desc in ipairs_map(ents_with_outputs[eid] or {}, unpack) do
+				for _,name,tp,desc in ipairs_map(ents_with_outputs[eid] or {}, unpack) do
 					text = text..string.format("%s (%s) [%s]\n", name, tp, desc)
 				end
 				draw.DrawText(text,"Trebuchet24",10,300,Color(255,255,255,255),0)
@@ -751,34 +715,6 @@ elseif CLIENT then
 			hook.Remove("HUDPaint", "wire_ports_test")
 		end
 	end
-end
-
--- For transmitting the yellow lines showing links between controllers and ents, as used by the Adv Entity Marker
-if SERVER then
-	util.AddNetworkString("WireLinkedEnts")
-	function WireLib.SendMarks(controller, marks)
-		if not IsValid(controller) or not (controller.Marks or marks) then return end
-		net.Start("WireLinkedEnts")
-			net.WriteEntity(controller)
-			net.WriteUInt(#(controller.Marks or marks), 16)
-			for k,v in pairs(controller.Marks or marks) do
-				net.WriteEntity(v)
-			end
-		net.Broadcast()
-	end
-else
-	net.Receive("WireLinkedEnts", function(netlen)
-		local Controller = net.ReadEntity()
-		if IsValid(Controller) then
-			Controller.Marks = {}
-			for i=1, net.ReadUInt(16) do
-				local link = net.ReadEntity()
-				if IsValid(link) then
-					table.insert(Controller.Marks, link)
-				end
-			end
-		end
-	end)
 end
 
 --[[
@@ -887,7 +823,6 @@ local one = {
 
 -- returns a table of tables that inherit from the above info
 local floor = math.floor
-local min = math.min
 function nicenumber.info( n, steps )
 	if not n or n < 0 then return {} end
 	if n > 10 ^ 300 then n = 10 ^ 300 end
@@ -960,7 +895,6 @@ end
 -------------------------
 -- nicetime
 -------------------------
-local floor = math.floor
 local times = {
 	{ "y", 31556926 }, -- years
 	{ "mon", 2629743.83 }, -- months
@@ -998,4 +932,404 @@ function nicenumber.nicetime( n )
 	else
 		return "0s"
 	end
+end
+
+function WireLib.isnan(n)
+	return n ~= n
+end
+local isnan = WireLib.isnan
+
+-- This function clamps the position before moving the entity
+local minx, miny, minz = -16384, -16384, -16384
+local maxx, maxy, maxz = 16384, 16384, 16384
+local clamp = math.Clamp
+function WireLib.clampPos(pos)
+	local x, y, z = pos:Unpack()
+
+	return Vector(clamp(x, minx, maxx), clamp(y, miny, maxy), clamp(z, minz, maxz))
+end
+
+function WireLib.setPos(ent, pos)
+	if isnan(pos.x) or isnan(pos.y) or isnan(pos.z) then return end
+	return ent:SetPos(WireLib.clampPos(pos))
+end
+
+function WireLib.setLocalPos(ent, pos)
+	if isnan(pos.x) or isnan(pos.y) or isnan(pos.z) then return end
+	return ent:SetLocalPos(WireLib.clampPos(pos))
+end
+
+function WireLib.setAng(ent, ang)
+	if isnan(ang.pitch) or isnan(ang.yaw) or isnan(ang.roll) then return end
+	return ent:SetAngles(ang)
+end
+
+function WireLib.setLocalAng(ent, ang)
+	if isnan(ang.pitch) or isnan(ang.yaw) or isnan(ang.roll) then return end
+	return ent:SetLocalAngles(ang)
+end
+
+local escapeChars = { n = "\n", r = "\r", t = "\t", ["\\"] = "\\", ["'"] = "'", ["\""] = "\"", a = "\a",
+b = "\b", f = "\f", v = "\v" }
+
+--- Replaces escape sequences with the appropriate character. Uses Lua escape sequences. Invalid sequences are skipped.
+--- @param str string
+function WireLib.ParseEscapes(str)
+	str = string_gsub(str, "\\(.?)([^\\]?[^\\]?[^\\]?[^\\]?[^\\]?[^\\]?[^\\]?}?)", function(i, arg)
+		if escapeChars[i] then
+			return escapeChars[i] .. arg
+		elseif i == "x" then
+			local num = string_match(arg, "^(%x%x)")
+			if not num then return false end
+			return string_char(tonumber(num, 16)) .. string_sub(arg, #num + 1)
+		elseif i >= "0" and i <= "9" then
+			local num = string_match(arg, "^(%d?%d?)")
+			if not num then return false end
+			local tonum = tonumber(i .. num)
+			return tonum < 256 and (string_char(tonum) .. string_sub(arg, #num + 1))
+		elseif i == "u" then
+			local num = string_match(arg, "^{(%x%x?%x?%x?%x?%x?)}")
+			if not num then return false end
+			local tonum = tonumber(num, 16)
+			return tonum <= 0x10ffff and utf8_char(tonum) .. string_sub(arg, #num + 3)
+		else
+			return false
+		end
+	end)
+	return str
+end
+
+-- Used by any applyForce function available to the user
+-- Ensures that the force is within the range of a float, to prevent
+-- physics engine crashes
+-- 2*maxmass*maxvelocity should be enough impulse to do whatever you want.
+-- Timer resolves issue with table not existing until next tick on Linux
+local max_force, min_force
+hook.Add("InitPostEntity","WireForceLimit",function()
+	timer.Simple(0, function()
+		max_force = 100000*physenv.GetPerformanceSettings().MaxVelocity
+		min_force = -max_force
+	end)
+end)
+
+-- Nan never equals itself, so if the value doesn't equal itself replace it with 0.
+function WireLib.clampForce( v )
+	local x, y, z = v:Unpack()
+
+	return Vector(
+		clamp( x, min_force, max_force ),
+		clamp( y, min_force, max_force ),
+		clamp( z, min_force, max_force )
+	)
+end
+
+
+--[[----------------------------------------------
+	GetClosestRealVehicle
+	This function checks if the provided entity is a "real" vehicle
+	If it is, it does nothing and returns the same entity back.
+	If it isn't, it scans the contraption of said vehicle, and
+	finds the closest one to the specified location
+	and returns it
+------------------------------------------------]]
+
+-- this helper function attempts to determine if the vehicle is actually a real vehicle
+-- and not a "fake" vehicle created by an 'scars'-like addon
+local valid_vehicles = {
+	prop_vehicle = true,
+	prop_vehicle_airboat = true,
+	prop_vehicle_apc = true,
+	prop_vehicle_cannon = true,
+	prop_vehicle_choreo_generic = true,
+	prop_vehicle_crane = true,
+	prop_vehicle_driveable = true,
+	prop_vehicle_jeep = true,
+	prop_vehicle_prisoner_pod = true
+}
+local function IsRealVehicle(pod)
+	return valid_vehicles[pod:GetClass()]
+end
+
+-- Helper function for GetClosestRealVehicle
+-- we don't use constraint.GetAllConstrainedEntities here because it's far worse for performance
+local function getContraption(ent, already_checked, callback)
+	for _, con in pairs( ent.Constraints or {} ) do
+		if IsValid(con) then
+			for i=1, 6 do
+				local e = con["Ent" .. i]
+				if e and not already_checked[e] then
+					already_checked[e] = true
+					callback(e)
+					getContraption(e,already_checked,callback)
+				end
+			end
+		end
+	end
+end
+
+-- GetClosestRealVehicle
+-- Args:
+--  vehicle; the vehicle that the user would like to link a controller to
+--  position; the position to find the closest vehicle to. If unspecified, uses the vehicle's position
+--  notify_this_player; notifies this player if a different vehicle was selected. If unspecified, notifies no one.
+function WireLib.GetClosestRealVehicle(vehicle,position,notify_this_player)
+	if not IsValid(vehicle) then return vehicle end
+	if not position then position = vehicle:GetPos() end
+
+	-- If this is a valid entity, but not a real vehicle, then let's get started
+	if IsValid(vehicle) and not IsRealVehicle(vehicle) then
+		local distance = math.huge
+
+		getContraption(vehicle,{[vehicle]=true},
+			function(ent)
+				if IsRealVehicle(ent) then
+					local dist = position:DistToSqr(ent:GetPos())
+					if dist < distance then
+						distance = dist
+						vehicle = ent
+					end
+				end
+			end
+		)
+
+		-- if vehicle is now a real vehicle, and we wanted to notify a player, do so now
+		if IsRealVehicle(vehicle) and IsValid(notify_this_player) and notify_this_player:IsPlayer() then
+			WireLib.AddNotify(notify_this_player,
+				"That wasn't a vehicle!\n"..
+				"The contraption has been scanned and this entity has instead been linked to the closest vehicle in this contraption.\n"..
+				"Hover your cursor over the controller to view the yellow line, which indicates the selected vehicle.",
+				NOTIFY_GENERIC,14,NOTIFYSOUND_DRIP1)
+		end
+	end
+
+	-- If the selected vehicle is still not a real vehicle even after all of the above, notify the user of this
+	if not IsRealVehicle(vehicle) and IsValid(notify_this_player) and notify_this_player:IsPlayer() then
+		WireLib.AddNotify(notify_this_player,
+			"The entity you linked to is not a 'real' vehicle, " ..
+			"and we were unable to find any 'real' vehicles attached to it. This controller might not work.",
+			NOTIFY_GENERIC,14,NOTIFYSOUND_DRIP1)
+	end
+
+	return vehicle
+end
+
+-- Garry's Mod lets serverside Lua check whether the key associated with a particular bind is
+-- pressed or not via the KeyPress and KeyRelease hooks, and the KeyDown function. However, this
+-- is only available for a small number of binds (mostly ones related to movement), which are
+-- exposed via the IN_ enums. It's possible to check any key manually serverside (with the
+-- player.keystate table), but that doesn't handle rebinding so isn't very friendly to users with
+-- non-QWERTY keyboard layouts. This system lets us extend arbitrarily the set of binds that the
+-- serverside knows about.
+do
+	local MESSAGE_NAME = "WireLib.SyncBinds"
+
+	local interestingBinds = {
+		"invprev",
+		"invnext",
+		"impulse 100",
+		"attack",
+		"jump",
+		"noclip",
+		"duck",
+		"forward",
+		"back",
+		"use",
+		"left",
+		"right",
+		"moveleft",
+		"moveright",
+		"attack2",
+		"reload",
+		"alt1",
+		"alt2",
+		"showscores",
+		"speed",
+		"walk",
+		"zoom",
+		"grenade1",
+		"grenade2",
+	}
+	local interestingBindsLookup = {}
+	for k, v in pairs(interestingBinds) do interestingBindsLookup[v] = k end
+
+	if CLIENT then
+		hook.Add("InitPostEntity", MESSAGE_NAME, function()
+			local data = {}
+			for button = BUTTON_CODE_NONE, BUTTON_CODE_LAST do
+				local binding = input.LookupKeyBinding(button)
+				if binding ~= nil then
+					if string.sub(binding, 1, 1) == "+" then binding = string.sub(binding, 2) end
+					local bindingIndex = interestingBindsLookup[binding]
+					if bindingIndex ~= nil then
+						table.insert(data, { Button = button, BindingIndex = bindingIndex })
+					end
+				end
+			end
+
+			-- update net integer precisions if interestingBinds exceeds 32
+			if (BUTTON_CODE_COUNT >= 65536) then ErrorNoHalt("ERROR! BUTTON_CODE_COUNT exceeds 65536!") end
+			if (#interestingBinds >= 32) then ErrorNoHalt("ERROR! Interesting binds exceeds 32!") end
+
+			net.Start(MESSAGE_NAME)
+			net.WriteUInt(#data, 8)
+			for _, datum in pairs(data) do
+				net.WriteUInt(datum.Button, 16)
+				net.WriteUInt(datum.BindingIndex, 5)
+			end
+			net.SendToServer()
+		end)
+	elseif SERVER then
+		util.AddNetworkString(MESSAGE_NAME)
+		net.Receive(MESSAGE_NAME, function(_, player)
+			player.SyncedBindings = {}
+			local count = net.ReadUInt(8)
+			for _ = 1, count do
+				local button = net.ReadUInt(16)
+				local bindingIndex = net.ReadUInt(5)
+				if button > BUTTON_CODE_NONE and button <= BUTTON_CODE_LAST then
+					local binding = interestingBinds[bindingIndex]
+					player.SyncedBindings[button] = binding
+				end
+			end
+		end)
+
+		hook.Add("PlayerButtonDown", MESSAGE_NAME, function(player, button)
+			if not player.SyncedBindings then return end
+			local binding = player.SyncedBindings[button]
+			hook.Run("PlayerBindDown", player, binding, button)
+		end)
+
+		hook.Add("PlayerButtonUp", MESSAGE_NAME, function(player, button)
+			if not player.SyncedBindings then return end
+			local binding = player.SyncedBindings[button]
+			hook.Run("PlayerBindUp", player, binding, button)
+		end)
+	end
+end
+
+-- Generic clean-up system for tables with players as keys
+WireLib.PlayerTables = setmetatable({}, {__mode = "kv"})
+
+function WireLib.RegisterPlayerTable(tbl)
+    tbl = tbl or {}
+    WireLib.PlayerTables[tbl] = tbl
+    return tbl
+end
+
+hook.Add("PlayerDisconnected", "WireLib_PlayerDisconnect", function(ply)
+  for _,tbl in pairs(WireLib.PlayerTables) do
+    tbl[ply] = nil
+  end
+end)
+
+
+local EntityMeta   = FindMetaTable("Entity") -- direct references are faster
+local GetPos       = EntityMeta.GetPos
+local GetAngles    = EntityMeta.GetAngles
+
+function WireLib.GetComputeIfEntityTransformDirty(compute)
+	return setmetatable({}, {
+		__index=function(t,ent) local r={Vector(math.huge), Angle()} t[ent]=r return r end,
+		__call=function(t,ent)
+			local data = t[ent]
+			local pos, ang = GetPos(ent), GetAngles(ent)
+			if pos~=data[1] or ang~=data[2] then
+				data[1] = pos
+				data[2] = ang
+				data[3] = compute(ent)
+			end
+			return data[3]
+		end
+	})
+end
+
+-- Notify --
+
+---@alias WireLib.NotifySeverity
+---| 0 # None
+---| 1 # Info
+---| 2 # Warning
+---| 3 # Error
+
+local severity2color = {
+	[0] = color_white,
+	[1] = color_white,
+	[2] = Color(255, 88, 1),
+	[3] = Color(255, 32, 0)
+}
+
+local WIREMOD_COLOR = Color(1, 168, 255)
+
+local severity2title = {
+	[0] = { "" },
+	[1] = { WIREMOD_COLOR, "[Wiremod]: " },
+	[2] = { WIREMOD_COLOR, "[Wiremod ", severity2color[2], "WARNING", WIREMOD_COLOR, "]: " },
+	[3] = { WIREMOD_COLOR, "[Wiremod ", severity2color[3], "ERROR", WIREMOD_COLOR, "]: " },
+}
+
+--- Internal. Creates a table for MsgC/chat.AddText.
+function WireLib.NotifyBuilder(msg, severity, color)
+	local ret = {}
+	for k, v in ipairs(severity2title[severity]) do
+		ret[k] = v
+	end
+	local n = #ret
+	ret[n + 1] = color or severity2color[severity]
+	ret[n + 2] = msg
+	return ret
+end
+
+local typeIDToStringTable = {
+	[TYPE_NONE] = "none",
+	[TYPE_NIL] = "nil",
+	[TYPE_BOOL] = "boolean",
+	[TYPE_LIGHTUSERDATA] = "lightuserdata",
+	[TYPE_NUMBER] = "number",
+	[TYPE_STRING] = "string",
+	[TYPE_TABLE] = "table",
+	[TYPE_FUNCTION] = "function",
+	[TYPE_USERDATA] = "userdata",
+	[TYPE_THREAD] = "thread",
+	[TYPE_ENTITY] = "entity",
+	[TYPE_VECTOR] = "vector",
+	[TYPE_ANGLE] = "angle",
+	[TYPE_PHYSOBJ] = "physobj",
+	[TYPE_SAVE] = "save",
+	[TYPE_RESTORE] = "restore",
+	[TYPE_DAMAGEINFO] = "damageinfo",
+	[TYPE_EFFECTDATA] = "effectdata",
+	[TYPE_MOVEDATA] = "movedata",
+	[TYPE_RECIPIENTFILTER] = "recipientfilter",
+	[TYPE_USERCMD] = "usercmd",
+	[TYPE_SCRIPTEDVEHICLE] = "scriptedvehicle",
+	[TYPE_MATERIAL] = "material",
+	[TYPE_PANEL] = "panel",
+	[TYPE_PARTICLE] = "particle",
+	[TYPE_PARTICLEEMITTER] = "particleemitter",
+	[TYPE_TEXTURE] = "texture",
+	[TYPE_USERMSG] = "usermsg",
+	[TYPE_CONVAR] = "convar",
+	[TYPE_IMESH] = "imesh",
+	[TYPE_MATERIAL] = "matrix",
+	[TYPE_SOUND] = "sound",
+	[TYPE_PIXELVISHANDLE] = "pixelvishandle",
+	[TYPE_DLIGHT] = "dlight",
+	[TYPE_VIDEO] = "video",
+	[TYPE_FILE] = "file",
+	[TYPE_LOCOMOTION] = "locomotion",
+	[TYPE_PATH] = "path",
+	[TYPE_NAVAREA] = "navarea",
+	[TYPE_SOUNDHANDLE] = "soundhandle",
+	[TYPE_NAVLADDER] = "navladder",
+	[TYPE_PARTICLESYSTEM] = "particlesystem",
+	[TYPE_PROJECTEDTEXTURE] = "projectedtexture",
+	[TYPE_PHYSCOLLIDE] = "physcollide",
+	[TYPE_SURFACEINFO] = "surfaceinfo",
+	[TYPE_COUNT] = "count",
+	[TYPE_COLOR] = "color",
+}
+
+-- Silly function to make printouts more userfriendly.
+function WireLib.typeIDToString(typeID)
+	return typeIDToStringTable[typeID] or "unregistered type"
 end

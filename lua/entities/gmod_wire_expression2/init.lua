@@ -1,89 +1,66 @@
-AddCSLuaFile('cl_init.lua')
-AddCSLuaFile('shared.lua')
-include('shared.lua')
+AddCSLuaFile("cl_init.lua")
+AddCSLuaFile("shared.lua")
+include("shared.lua")
 
--- This makes E2s not save using garry's workshop save
--- Until someone can find the cause of the crashes, leave this in here
-local old = gmsave.ShouldSaveEntity
-function gmsave.ShouldSaveEntity( ent, ... )
-	if ent:GetClass() == "gmod_wire_expression2" then return false end
-	return old( ent, ... )
-end
+DEFINE_BASECLASS("base_wire_entity")
 
-local wire_expression2_unlimited = GetConVar("wire_expression2_unlimited")
-local wire_expression2_quotasoft = GetConVar("wire_expression2_quotasoft")
-local wire_expression2_quotahard = GetConVar("wire_expression2_quotahard")
-local wire_expression2_quotatick = GetConVar("wire_expression2_quotatick")
+e2_softquota = nil
+e2_hardquota = nil
+e2_tickquota = nil
+e2_timequota = nil
 
-timer.Create("e2quota", 1, 0, function()
-	if wire_expression2_unlimited:GetBool() then
-		e2_softquota = 1000000
-		e2_hardquota = 1000000
-		e2_tickquota = 100000
-	else
-		e2_softquota = wire_expression2_quotasoft:GetInt()
-		e2_hardquota = wire_expression2_quotahard:GetInt()
-		e2_tickquota = wire_expression2_quotatick:GetInt()
+do
+	local wire_expression2_unlimited = GetConVar("wire_expression2_unlimited")
+	local wire_expression2_quotasoft = GetConVar("wire_expression2_quotasoft")
+	local wire_expression2_quotahard = GetConVar("wire_expression2_quotahard")
+	local wire_expression2_quotatick = GetConVar("wire_expression2_quotatick")
+	local wire_expression2_quotatime = GetConVar("wire_expression2_quotatime")
+
+	local function updateQuotas()
+		if wire_expression2_unlimited:GetBool() then
+			e2_softquota = 1000000
+			e2_hardquota = 1000000
+			e2_tickquota = 100000
+			e2_timequota = -1
+		else
+			e2_softquota = wire_expression2_quotasoft:GetInt()
+			e2_hardquota = wire_expression2_quotahard:GetInt()
+			e2_tickquota = wire_expression2_quotatick:GetInt()
+			e2_timequota = wire_expression2_quotatime:GetInt() * 0.001
+		end
 	end
-end)
-
-local function copytype(var)
-	return istable(var) and table.Copy(var) or var
+	cvars.AddChangeCallback("wire_expression2_unlimited", updateQuotas)
+	cvars.AddChangeCallback("wire_expression2_quotasoft", updateQuotas)
+	cvars.AddChangeCallback("wire_expression2_quotahard", updateQuotas)
+	cvars.AddChangeCallback("wire_expression2_quotatick", updateQuotas)
+	cvars.AddChangeCallback("wire_expression2_quotatime", updateQuotas)
+	updateQuotas()
 end
 
-
-local ScopeManager = {}
-ScopeManager.__index = ScopeManager
-
-function ScopeManager:InitScope()
-	self.Scopes = {}
-	self.ScopeID = 0
-	self.Scopes[0] = self.GlobalScope or { vclk = {} } -- for creating new enviroments
-	self.Scope = self.Scopes[0]
-	self.GlobalScope = self.Scope
-end
-
-function ScopeManager:PushScope()
-	self.Scope = { vclk = {} }
-	self.ScopeID = self.ScopeID + 1
-	self.Scopes[self.ScopeID] = self.Scope
-end
-
-function ScopeManager:PopScope()
-	self.ScopeID = self.ScopeID - 1
-	self.Scope = self.Scopes[self.ScopeID]
-	self.Scopes[self.ScopeID] = self.Scope
-	return table.remove(self.Scopes, self.ScopeID + 1)
-end
-
-function ScopeManager:SaveScopes()
-	return { self.Scopes, self.ScopeID, self.Scope }
-end
-
-function ScopeManager:LoadScopes(Scopes)
-	self.Scopes = Scopes[1]
-	self.ScopeID = Scopes[2]
-	self.Scope = Scopes[3]
-end
+local fixDefault = E2Lib.fixDefault
 
 function ENT:UpdateOverlay(clear)
+	local selfTbl = self:GetTable()
+
 	if clear then
-		self:SetOverlayData( {
-								txt = "(none)",
-								error = self.error,
-								prfbench = 0,
-								prfcount = 0,
-								timebench = 0
-							})
+		self:SetOverlayData({
+			txt = "(none)",
+			error = selfTbl.error,
+			prfbench = 0,
+			prfcount = 0,
+			timebench = 0
+		})
 	else
-		self:SetOverlayData( {
-								txt = self.name, -- name/error
-								error = self.error, -- error bool
-								prfbench = self.context.prfbench,
-								prfcount = self.context.prfcount,
-								timebench = self.context.timebench
-							})
-	end	
+		local context = selfTbl.context
+
+		self:SetOverlayData({
+			txt = selfTbl.name, -- name/error
+			error = selfTbl.error, -- error bool
+			prfbench = context.prfbench,
+			prfcount = context.prfcount,
+			timebench = context.timebench
+		})
+	end
 end
 
 function ENT:Initialize()
@@ -91,9 +68,11 @@ function ENT:Initialize()
 	self:SetMoveType(MOVETYPE_VPHYSICS)
 	self:SetSolid(SOLID_VPHYSICS)
 
+	self.name = "(generic)"
 	self.Inputs = WireLib.CreateInputs(self, {})
 	self.Outputs = WireLib.CreateOutputs(self, {})
 
+	self.error = true
 	self:UpdateOverlay(true)
 	self:SetColor(Color(255, 0, 0, self:GetColor().a))
 end
@@ -104,78 +83,206 @@ end
 
 local SysTime = SysTime
 
-function ENT:Execute()
-	if self.error then return end
-	if self.context.resetting then return end
+function ENT:Destruct()
+	self:PCallHook("destruct")
 
-	for k, v in pairs(self.tvars) do
-		self.GlobalScope[k] = copytype(wire_expression_types2[v][2])
+	if self.registered_events then
+		for evt in pairs(self.registered_events) do
+			if E2Lib.Env.Events[evt].destructor then
+				-- If the event has a destructor to run when the E2 is removed and listening to the event.
+				E2Lib.Env.Events[evt].destructor(self.context)
+			end
+
+			E2Lib.Env.Events[evt].listening[self] = nil
+		end
 	end
+end
 
-	self:PCallHook('preexecute')
+function ENT:UpdatePerf(selfTbl)
+	selfTbl = selfTbl or self:GetTable()
+	local context = selfTbl.context
+	if not context then return end
+	if selfTbl.error then return end
 
-	self.context:PushScope()
+	context.prfbench = context.prfbench * 0.95 + context.prf * 0.05
+	context.prfcount = context.prfcount + context.prf - e2_softquota
+	context.timebench = context.timebench * 0.95 + context.time * 0.05 -- Average it over the last 20 ticks
+
+	if context.prfcount < 0 then context.prfcount = 0 end
+
+	self:UpdateOverlay()
+
+	context.prf = 0
+	context.time = 0
+end
+
+function ENT:Execute(script, context)
+	local selfTbl = self:GetTable()
+	context = context or selfTbl.context
+	script = script or selfTbl.script
+	if not context or selfTbl.error or context.resetting then return end
+
+	self:PCallHook("preexecute")
+
+	context.stackdepth = context.stackdepth + 1
+
+	if context.stackdepth >= 150 then
+		self:Error("Expression 2 (" .. selfTbl.name .. "): stack quota exceeded", "stack quota exceeded")
+	end
 
 	local bench = SysTime()
 
-	local ok, msg = pcall(self.script[1], self.context, self.script)
+	local ok, msg = pcall(script, context)
+
 	if not ok then
+		local _catchable, msg, trace = E2Lib.unpackException(msg)
+
 		if msg == "exit" then
+			self:UpdatePerf(selfTbl)
 		elseif msg == "perf" then
-			self:Error("Expression 2 (" .. self.name .. "): tick quota exceeded", "tick quota exceeded")
+			local trace = context.trace
+			self:UpdatePerf(selfTbl)
+			self:Error("Expression 2 (" .. selfTbl.name .. "): tick quota exceeded (at line " .. trace.start_line .. ", char " .. trace.start_col .. ")", "tick quota exceeded")
+		elseif trace then
+			self:Error("Expression 2 (" .. selfTbl.name .. "): Runtime error '" .. msg .. "' at line " .. trace.start_line .. ", char " .. trace.start_col, "script error")
 		else
-			self:Error("Expression 2 (" .. self.name .. "): " .. msg, "script error")
+			local trace = context.trace
+			self:Error("Expression 2 (" .. selfTbl.name .. "): Internal error '" .. msg .. "' at line " .. trace.start_line .. ", char " .. trace.start_col, "script error")
 		end
 	end
 
-	self.context.time = self.context.time + (SysTime() - bench)
+	context.time = context.time + (SysTime() - bench)
+	context.stackdepth = context.stackdepth - 1
 
-	self.context:PopScope()
+	local forceTriggerOutputs = selfTbl.first or selfTbl.duped
+	selfTbl.first = false -- if hooks call execute
+	selfTbl.duped = false -- if hooks call execute
+	context.triggerinput = nil -- if hooks call execute
 
-	self.first = false -- if hooks call execute
-	self.duped = false -- if hooks call execute
-	self.context.triggerinput = nil -- if hooks call execute
+	self:PCallHook("postexecute")
 
-	self:PCallHook('postexecute')
+	self:TriggerOutputs(forceTriggerOutputs)
 
-	self:TriggerOutputs()
+	local globalScope = selfTbl.GlobalScope
+	local inputs = selfTbl.Inputs
 
-	for k, v in pairs(self.inports[3]) do
-		if self.GlobalScope[k] then
-			if wire_expression_types[self.Inputs[k].Type][3] then
-				self.GlobalScope[k] = wire_expression_types[self.Inputs[k].Type][3](self.context, self.Inputs[k].Value)
+	for k, v in pairs(selfTbl.inports[3]) do
+		if globalScope[k] then
+			if wire_expression_types[inputs[k].Type][3] then
+				globalScope[k] = wire_expression_types[inputs[k].Type][3](context, inputs[k].Value)
 			else
-				self.GlobalScope[k] = self.Inputs[k].Value
+				globalScope[k] = inputs[k].Value
 			end
 		end
 	end
 
-	self.GlobalScope.vclk = {}
-	for k, v in pairs(self.globvars) do
-		self.GlobalScope[k] = copytype(wire_expression_types2[v][2])
+	globalScope.vclk = {}
+	if not selfTbl.directives.strict then
+		for k, var in pairs(selfTbl.globvars_mut) do
+			globalScope[k] = fixDefault(wire_expression_types2[var.type][2])
+		end
 	end
 
-	if self.context.prfcount + self.context.prf - e2_softquota > e2_hardquota then
-		self:Error("Expression 2 (" .. self.name .. "): tick quota exceeded", "hard quota exceeded")
+	if context.prfcount + context.prf - e2_softquota > e2_hardquota then
+		local trace = context.trace
+		self:Error("Expression 2 (" .. selfTbl.name .. "): tick quota exceeded (at line " .. trace.start_line .. ", char " .. trace.start_col .. ")", "hard quota exceeded")
 	end
 
-	if self.error then self:PCallHook('destruct') end
+	if self.error then
+		self:Destruct()
+	end
+end
+
+---@param evt string
+---@param args table?
+function ENT:ExecuteEvent(evt, args)
+	assert(evt, "Expected event name, got nil (or false)")
+
+	local selfTbl = self:GetTable()
+	local context = selfTbl.context
+	if not context or selfTbl.error or selfTbl.context.resetting then return end
+
+	local handlers = selfTbl.registered_events[evt]
+	if not handlers then return end
+
+	self:PCallHook("preexecute")
+
+	for name, handler in pairs(handlers) do
+		context.stackdepth = context.stackdepth + 1
+
+		if context.stackdepth >= 150 then
+			self:Error("Expression 2 (" .. selfTbl.name .. "): stack quota exceeded", "stack quota exceeded")
+		end
+
+		local bench = SysTime()
+		local ok, msg = pcall(handler, context, args)
+
+		if not ok then
+			local _catchable, msg, trace = E2Lib.unpackException(msg)
+
+			if msg == "exit" then
+				self:UpdatePerf(selfTbl)
+			elseif msg == "perf" then
+				local trace = context.trace
+				self:UpdatePerf(selfTbl)
+				self:Error("Expression 2 (" .. selfTbl.name .. "): tick quota exceeded (at line " .. trace.start_line .. ", char " .. trace.start_col .. ")", "tick quota exceeded")
+			elseif trace then
+				self:Error("Expression 2 (" .. selfTbl.name .. "): Runtime error '" .. msg .. "' at line " .. trace.start_line .. ", char " .. trace.start_col, "script error")
+			else
+				local trace = context.trace
+				self:Error("Expression 2 (" .. selfTbl.name .. "): Internal error '" .. msg .. "' at line " .. trace.start_line .. ", char " .. trace.start_col, "script error")
+			end
+		end
+
+		context.time = context.time + (SysTime() - bench)
+		context.stackdepth = context.stackdepth - 1
+	end
+
+	context.triggerinput = nil -- if hooks call execute
+
+	self:PCallHook("postexecute")
+	self:TriggerOutputs()
+
+	local globalScope = selfTbl.GlobalScope
+	globalScope.vclk = {}
+
+	if not selfTbl.directives.strict then
+		for k, var in pairs(selfTbl.globvars_mut) do
+			globalScope[k] = fixDefault(wire_expression_types2[var.type][2])
+		end
+	end
+
+	if context.prfcount + context.prf - e2_softquota > e2_hardquota then
+		local trace = context.trace
+		self:Error("Expression 2 (" .. selfTbl.name .. "): tick quota exceeded (at line " .. trace.start_line .. ", char " .. trace.start_col .. ")", "hard quota exceeded")
+	end
+
+	if selfTbl.error then
+		self:Destruct()
+	end
 end
 
 function ENT:Think()
-	self.BaseClass.Think(self)
-	self:NextThink(CurTime()+0.030303)
+	BaseClass.Think(self)
+	self:NextThink(CurTime() + 0.030303)
 
-	if self.context and not self.error then
-		self.context.prfbench = self.context.prfbench * 0.95 + self.context.prf * 0.05
-		self.context.prfcount = self.context.prfcount + self.context.prf - e2_softquota
-		self.context.timebench = self.context.timebench * 0.95 + self.context.time * 0.05 -- Average it over the last 20 ticks
-		if self.context.prfcount < 0 then self.context.prfcount = 0 end
+	local selfTbl = self:GetTable()
+	local context = selfTbl.context
+	if not context then return true end
+	if selfTbl.error then return true end
 
-		self:UpdateOverlay()
+	self:UpdatePerf(selfTbl)
 
-		self.context.prf = 0
-		self.context.time = 0
+	if context.prfcount < 0 then context.prfcount = 0 end
+
+	self:UpdateOverlay()
+
+	context.prf = 0
+	context.time = 0
+
+	if e2_timequota > 0 and context.timebench > e2_timequota then
+		self:Error("Expression 2 (" .. selfTbl.name .. "): time quota exceeded", "time quota exceeded")
+		self:PCallHook("destruct")
 	end
 
 	return true
@@ -183,15 +290,18 @@ end
 
 local CallHook = wire_expression2_CallHook
 function ENT:CallHook(hookname, ...)
-	if not self.context then return end
-	return CallHook(hookname, self.context, ...)
+	local context = self.context
+	if not context then return end
+	return CallHook(hookname, context, ...)
 end
 
 function ENT:OnRemove()
 	if not self.error and not self.removing then -- make sure destruct hooks aren't called twice (once on error, once on remove)
 		self.removing = true
-		self:PCallHook('destruct')
+		self:Destruct()
 	end
+
+	BaseClass.OnRemove(self)
 end
 
 function ENT:PCallHook(...)
@@ -208,6 +318,7 @@ function ENT:Error(message, overlaytext)
 	self:SetColor(Color(255, 0, 0, self:GetColor().a))
 
 	self.error = true
+	self.lastResetOrError = CurTime()
 	-- ErrorNoHalt(message .. "\n")
 	WireLib.ClientError(message, self.player)
 end
@@ -218,8 +329,9 @@ function ENT:CompileCode(buffer, files, filepath)
 		self.filepath = filepath
 	end
 
-	local status, directives, buffer = PreProcessor.Execute(buffer,nil,self)
-	if not status then self:Error(directives) return end
+	local status, directives, buffer = E2Lib.PreProcessor.Execute(buffer,nil,self)
+	if not status then return self:Error(directives[1].message) end
+
 	self.buffer = buffer
 	self.error = false
 
@@ -238,93 +350,109 @@ function ENT:CompileCode(buffer, files, filepath)
 	self.persists = directives.persist
 	self.trigger = directives.trigger
 
-	local status, tokens = Tokenizer.Execute(self.buffer)
-	if not status then self:Error(tokens) return end
+	local status, tokens = E2Lib.Tokenizer.Execute(self.buffer)
+	if not status then self:Error(tokens[1].message) return end
 
-	local status, tree, dvars = Parser.Execute(tokens)
-	if not status then self:Error(tree) return end
+	local status, tree, dvars = E2Lib.Parser.Execute(tokens)
+	if not status then self:Error(tree.message) return end
 
 	if not self:PrepareIncludes(files) then return end
 
-	local status, script, inst = Compiler.Execute(tree, self.inports[3], self.outports[3], self.persists[3], dvars, self.includes)
-	if not status then self:Error(script) return end
+	local status, script, inst = E2Lib.Compiler.Execute(tree, directives, dvars, self.includes)
+	if not status then self:Error(script.message) return end
 
 	self.script = script
-	self.dvars = inst.dvars
-	self.tvars = inst.tvars
-	self.funcs = inst.funcs
-	self.funcs_ret = inst.funcs_ret
-	self.globvars = inst.GlobalScope
+	self.registered_events = inst.registered_events
+
+	self.dvars = dvars
+	self.funcs = inst.user_functions
+	self.globvars_mut = table.Copy(inst.global_scope.vars) ---@type table<string, VarData> # table.Copy because we will mutate this
+	self.globvars = inst.global_scope.vars
 
 	self:ResetContext()
+end
+
+function ENT:GetGateName()
+	return self.name
 end
 
 function ENT:GetCode()
 	return self.original, self.inc_files
 end
 
+---@param files table<string, string>
 function ENT:PrepareIncludes(files)
-
 	self.inc_files = files
-
 	self.includes = {}
 
 	for file, buffer in pairs(files) do
-		local status, directives, buffer = PreProcessor.Execute(buffer, self.directives)
-		if not status then
-			self:Error("(" .. file .. ")" .. directives)
+		local status, directives, buffer = E2Lib.PreProcessor.Execute(buffer, self.directives)
+		if not status then ---@cast directives Error[]
+			self:Error("(" .. file .. ") " .. directives[1].message)
 			return
 		end
 
-		local status, tokens = Tokenizer.Execute(buffer)
-		if not status then
-			self:Error("(" .. file .. ")" .. tokens)
+		local status, tokens = E2Lib.Tokenizer.Execute(buffer)
+		if not status then ---@cast tokens Error[]
+			self:Error("(" .. file .. ") " .. tokens[1].message)
 			return
 		end
 
-		local status, tree, dvars = Parser.Execute(tokens)
-		if not status then
-			self:Error("(" .. file .. ")" .. tree)
+		local status, tree, dvars = E2Lib.Parser.Execute(tokens)
+		if not status then ---@cast tree Error
+			self:Error("(" .. file .. ") " .. tree.message)
 			return
 		end
 
-		self.includes[file] = { tree }
+		self.includes[file] = { tree, nil, dvars }
 	end
 
 	return true
 end
 
 function ENT:ResetContext()
-	local context = {
-		data = {},
-		vclk = {}, -- Used only by arrays and tables!
-		funcs = self.funcs,
-		funcs_ret = self.funcs_ret,
-		entity = self,
-		player = self.player,
-		uid = self.uid,
-		prf = 0,
-		prfcount = 0,
-		prfbench = 0,
-		time = 0,
-		timebench = 0,
-		includes = self.includes
-	}
+	local resetPrfMult = 1
+	if self.lastResetOrError then
+		-- reduces all the opcounters based on the time passed since
+		-- the last time the chip was reset or errored
+		-- waiting up to 30s before resetting results in a 0.1 multiplier
+		local passed = CurTime() - self.lastResetOrError
+		resetPrfMult = math.max(0.1, (30 - passed) / 30)
+	end
+	self.lastResetOrError = CurTime()
 
-	setmetatable(context, ScopeManager)
-	context:InitScope()
+	local context = E2Lib.RuntimeContext.builder()
+		:withChip(self)
+		:withOwner(self.player)
+		:withStrict(self.directives.strict)
+		:withUserFunctions(self.funcs)
+		:withIncludes(self.includes)
 
-	self.context = context
+	if self.context then
+		context = context
+			:withPrf(self.context.prf * resetPrfMult, self.context.prfcount * resetPrfMult, self.context.prfbench * resetPrfMult)
+			:withTime(self.context.time * resetPrfMult, self.context.timebench * resetPrfMult)
+	end
+
+	self.context = context:build()
 	self.GlobalScope = context.GlobalScope
 	self._vars = self.GlobalScope -- Dupevars
 
-	self.Inputs = WireLib.AdjustSpecialInputs(self, self.inports[1], self.inports[2])
-	self.Outputs = WireLib.AdjustSpecialOutputs(self, self.outports[1], self.outports[2])
-	
+	local conv_inputs, conv_outputs = {}, {}
+	for i, input in ipairs(self.inports[2]) do
+		conv_inputs[i] = wire_expression_types2[input][1]
+	end
+	for i, input in ipairs(self.outports[2]) do
+		conv_outputs[i] = wire_expression_types2[input][1]
+	end
+
+	self.Inputs = WireLib.AdjustSpecialInputs(self, self.inports[1], conv_inputs, self.inports[4])
+	self.Outputs = WireLib.AdjustSpecialOutputs(self, self.outports[1], conv_outputs, self.outports[4])
+
 	if self.extended then -- It was extended before the adjustment, recreate the wirelink
 		WireLib.CreateWirelinkOutput( self.player, self, {true} )
 	end
-	
+
 	self._original = string.Replace(string.Replace(self.original, "\"", string.char(163)), "\n", string.char(128))
 
 	self._name = self.name
@@ -333,26 +461,28 @@ function ENT:ResetContext()
 
 	for k, v in pairs(self.inports[3]) do
 		self._inputs[1][#self._inputs[1] + 1] = k
-		self._inputs[2][#self._inputs[2] + 1] = v
-		self.GlobalScope[k] = copytype(wire_expression_types[v][2])
-		self.globvars[k] = nil
+		self._inputs[2][#self._inputs[2] + 1] = wire_expression_types2[v][1]
+		self.GlobalScope[k] = fixDefault(wire_expression_types2[v][2])
+		self.globvars_mut[k] = nil
 	end
 
 	for k, v in pairs(self.outports[3]) do
 		self._outputs[1][#self._outputs[1] + 1] = k
-		self._outputs[2][#self._outputs[2] + 1] = v
-		self.GlobalScope[k] = copytype(wire_expression_types[v][2])
+		self._outputs[2][#self._outputs[2] + 1] = wire_expression_types2[v][1]
+		self.GlobalScope[k] = fixDefault(wire_expression_types2[v][2])
 		self.GlobalScope.vclk[k] = true
-		self.globvars[k] = nil
+		self.globvars_mut[k] = nil
 	end
 
 	for k, v in pairs(self.persists[3]) do
-		self.GlobalScope[k] = copytype(wire_expression_types[v][2])
-		self.globvars[k] = nil
+		self.GlobalScope[k] = fixDefault(wire_expression_types2[v][2])
+		self.globvars_mut[k] = nil
 	end
 
-	for k, v in pairs(self.globvars) do
-		self.GlobalScope[k] = copytype(wire_expression_types2[v][2])
+	if not self.directives.strict then -- Need to disable this so local variables at top scope don't get reset
+		for k, var in pairs(self.globvars_mut) do
+			self.GlobalScope[k] = fixDefault(wire_expression_types2[var.type][2])
+		end
 	end
 
 	for k, v in pairs(self.Inputs) do
@@ -363,7 +493,7 @@ function ENT:ResetContext()
 		end
 	end
 
-	for k, v in pairs(self.dvars) do
+	for k, _ in pairs(self.dvars) do
 		self.GlobalScope["$" .. k] = self.GlobalScope[k]
 	end
 
@@ -390,7 +520,7 @@ end
 
 function ENT:Setup(buffer, includes, restore, forcecompile, filepath)
 	if self.script then
-		self:PCallHook('destruct')
+		self:Destruct()
 	end
 
 	self.uid = IsValid(self.player) and self.player:UniqueID() or "World"
@@ -410,10 +540,10 @@ function ENT:Setup(buffer, includes, restore, forcecompile, filepath)
 
 	self:SetOverlayText(self.name)
 
-	local ok, msg = pcall(self.CallHook, self, 'construct')
+	local ok, msg = pcall(self.CallHook, self, "construct")
 	if not ok then
 		Msg("Construct hook(s) failed, executing destruct hooks...\n")
-		local ok2, msg2 = pcall(self.CallHook, self, 'destruct')
+		local ok2, msg2 = pcall(self.CallHook, self, "destruct")
 		if ok2 then
 			self:Error(msg .. "\nDestruct hooks succeeded.")
 		else
@@ -427,10 +557,21 @@ function ENT:Setup(buffer, includes, restore, forcecompile, filepath)
 	if not restore then
 		self.first = true
 		self:Execute()
+		self:Think()
+	end
+
+	-- Register events only after E2 has executed once
+	if self.registered_events then
+		for evt, _ in pairs(self.registered_events) do
+			if E2Lib.Env.Events[evt].constructor then
+				-- If the event has a constructor to run when the E2 is made and listening to the event.
+				E2Lib.Env.Events[evt].constructor(self.context)
+			end
+			E2Lib.Env.Events[evt].listening[self] = true
+		end
 	end
 
 	self:NextThink(CurTime())
-	self:Think()
 end
 
 function ENT:Reset()
@@ -438,34 +579,68 @@ function ENT:Reset()
 	self.context.resetting = true
 
 	-- reset the chip in the next tick
-	timer.Simple(0, function() self.Setup(self, self.original, self.inc_files) end)
+	timer.Simple(0, function()
+		if IsValid(self) then
+			self:Setup(self.original, self.inc_files)
+		end
+	end)
+end
+
+function ENT:ReadCell(Address)
+	local selfTbl = self:GetTable()
+	if selfTbl.error or not selfTbl.registered_events["readCell"] then return nil end
+	local ctx = selfTbl.context
+	ctx.data.hispeedIOError = false
+	ctx.data.readCellValue = 0
+	self:ExecuteEvent("readCell",{Address})
+	if ctx.data.hispeedIOError or self.error then return nil end
+	return ctx.data.readCellValue
+end
+
+function ENT:WriteCell(addr,value)
+	local selfTbl = self:GetTable()
+	if selfTbl.error or not selfTbl.registered_events["writeCell"] then return nil end
+	local ctx = selfTbl.context
+	ctx.data.hispeedIOError = false
+	self:ExecuteEvent("writeCell",{addr,value})
+	if ctx.data.hispeedIOError or self.error then return nil end
+	return true
 end
 
 function ENT:TriggerInput(key, value)
 	if self.error then return end
-	if key and self.inports[3][key] then
+	if key and self.inports and self.inports[3][key] then
 		local t = self.inports[3][key]
 
 		self.GlobalScope["$" .. key] = self.GlobalScope[key]
-		if wire_expression_types[t][3] then
-			self.GlobalScope[key] = wire_expression_types[t][3](self.context, value)
+		local iowrap = wire_expression_types2[t][3]
+		if iowrap then
+			self.GlobalScope[key] = iowrap(self.context, value)
 		else
 			self.GlobalScope[key] = value
 		end
 
-		self.context.triggerinput = key
-		if self.trigger[1] or self.trigger[2][key] then self:Execute() end
-		self.context.triggerinput = nil
+		self:ExecuteEvent("input", { key })
+
+		if self.trigger[1] or self.trigger[2][key] then -- if @trigger all or @trigger Key
+			self.context.triggerinput = key
+			self:Execute()
+			self.context.triggerinput = nil
+		end
 	end
 end
 
-function ENT:TriggerOutputs()
-	for key, t in pairs(self.outports[3]) do
-		if self.GlobalScope.vclk[key] or self.first then
-			if wire_expression_types[t][4] then
-				WireLib.TriggerOutput(self, key, wire_expression_types[t][4](self.context, self.GlobalScope[key]))
+function ENT:TriggerOutputs(force)
+	local selfTbl = self:GetTable()
+	local globalScope = selfTbl.GlobalScope
+	local context = selfTbl.context
+
+	for key, t in pairs(selfTbl.outports[3]) do
+		if globalScope.vclk[key] or force then
+			if wire_expression_types2[t][4] then
+				WireLib.TriggerOutput(self, key, wire_expression_types2[t][4](context, globalScope[key]))
 			else
-				WireLib.TriggerOutput(self, key, self.GlobalScope[key])
+				WireLib.TriggerOutput(self, key, globalScope[key])
 			end
 		end
 	end
@@ -476,17 +651,26 @@ function ENT:ApplyDupeInfo(ply, ent, info, GetEntByID, GetConstByID)
 
 	if not self.error then
 		for k, v in pairs(self.dupevars) do
-			self.GlobalScope[k] = v
-		end -- Rusketh Broke this :(
-		-- table.Merge(self.context.vars, self.dupevars)
+			-- Backwards compatibility to fix dupes with the old {n, n, n} angle and vector types
+			-- $ check is for delta variables stored in dupevars. ugly one liner.
+			local vartype = self.globvars[k] and self.globvars[k].type or (k:sub(1, 1) == "$" and (self.globvars[k:sub(2)] and self.globvars[k:sub(2)].type))
+			if vartype == "a" then
+				self.GlobalScope[k] = istable(v) and Angle(v[1], v[2], v[3]) or v
+			elseif vartype == "v" then
+				self.GlobalScope[k] = istable(v) and Vector(v[1], v[2], v[3]) or v
+			else
+				self.GlobalScope[k] = v
+			end
+		end
 		self.dupevars = nil
 
 		self.duped = true
 		self:Execute()
+		self:Think()
 		self.duped = false
 	end
 
-	self.BaseClass.ApplyDupeInfo(self, ply, ent, info, GetEntByID, GetConstByID)
+	BaseClass.ApplyDupeInfo(self, ply, ent, info, GetEntByID, GetConstByID)
 end
 
 -- -------------------------------- Transfer ----------------------------------
@@ -509,42 +693,49 @@ hook.Add("EntityRemoved", "Wire_Expression2_Player_Disconnected", function(ent)
 	if (ret == 0 or (ret == 2 and not wire_expression2_ShouldFreezeChip(ent))) then
 		return
 	end
-	for k, v in ipairs(ents.FindByClass("gmod_wire_expression2")) do
+	for _, v in ipairs(ents.FindByClass("gmod_wire_expression2")) do
 		if (v.player == ent) then
 			v:SetOverlayText(v.name .. "\n(Owner disconnected.)")
+			local oldColor = v:GetColor()
 			v:SetColor(Color(255, 0, 0, v:GetColor().a))
-			v.disconnectPaused = { r, g, b, a }
+			v.disconnectPaused = oldColor
 			v.error = true
 		end
 	end
 end)
 
 hook.Add("PlayerAuthed", "Wire_Expression2_Player_Authed", function(ply, sid, uid)
-	local c
 	for _, ent in ipairs(ents.FindByClass("gmod_wire_expression2")) do
 		if (ent.uid == uid) then
 			ent.context.player = ply
 			ent.player = ply
 			ent:SetNWEntity("player", ply)
-			if (ent.disconnectPaused) then
-				c = ent.disconnectPaused
-				ent:SetColor(Color(c[1], c[2], c[3], c[4]))
+			ent:SetPlayer(ply)
+
+			if ent.disconnectPaused then
+				ent:SetColor(ent.disconnectPaused)
 				ent:SetRenderMode(ent:GetColor().a == 255 and RENDERMODE_NORMAL or RENDERMODE_TRANSALPHA)
 				ent.error = false
-				ent.disconnectPaused = false
+				ent.disconnectPaused = nil
 				ent:SetOverlayText(ent.name)
 			end
 		end
 	end
+	for _, ent in ipairs(ents.FindByClass("gmod_wire_hologram")) do
+		if ent.steamid == sid then
+			ent:SetPlayer(ply)
+		end
+	end
 end)
 
-function MakeWireExpression2(player, Pos, Ang, model, buffer, name, inputs, outputs, vars, inc_files, filepath)
+function MakeWireExpression2(player, Pos, Ang, model, buffer, name, inputs, outputs, vars, inc_files, filepath, codeAuthor)
 	if not player then player = game.GetWorld() end -- For Garry's Map Saver
 	if IsValid(player) and not player:CheckLimit("wire_expressions") then return false end
+	if not WireLib.CanModel(player, model) then return false end
 
 	local self = ents.Create("gmod_wire_expression2")
 	if not self:IsValid() then return false end
-	
+
 	if buffer then self.duped = true end
 
 	self:SetModel(model)
@@ -557,23 +748,34 @@ function MakeWireExpression2(player, Pos, Ang, model, buffer, name, inputs, outp
 
 	if isstring( buffer ) then -- if someone dupes an E2 with compile errors, then all these values will be invalid
 		buffer = string.Replace(string.Replace(buffer, string.char(163), "\""), string.char(128), "\n")
+
+		-- Check codeAuthor actually exists, it wont be present on old dupes
+		-- No need to check if buffer already has a dupe related #error directive, as chips with compiler errors can't be duped
+		--[[
+		if codeAuthor and player:SteamID() ~= codeAuthor.steamID then
+			buffer = string.format(
+				"#error Dupe pasted with code authored by %s (%s). Please review the contents of the E2 before removing this directive\n\n",
+				codeAuthor.name, codeAuthor.steamID
+			) .. buffer
+		end
+		--]]
+
 		self.buffer = buffer
 		self:SetOverlayText(name)
-		
-		self.inc_files = inc_files or {}
 
 		self.Inputs = WireLib.AdjustSpecialInputs(self, inputs[1], inputs[2])
 		self.Outputs = WireLib.AdjustSpecialOutputs(self, outputs[1], outputs[2])
 
-		self.dupevars = vars
-		
+		self.inc_files = inc_files or {}
+		self.dupevars = vars or {}
+
 		self.filepath = filepath
 	else
-		self.buffer = "error(\"You tried to dupe an E2 with compile errors!\")\n#Unfortunately, no code can be saved when duping an E2 with compile errors.\n#Fix your errors and try again."
-		
+		self.buffer = "#error You tried to dupe an E2 with compile errors!\n#Unfortunately, no code can be saved when duping an E2 with compile errors.\n#Fix your errors and try again."
+
 		self.inc_files = {}
 		self.dupevars = {}
-		
+
 		self.name = "generic"
 	end
 
@@ -583,52 +785,59 @@ function MakeWireExpression2(player, Pos, Ang, model, buffer, name, inputs, outp
 	end
 	return self
 end
-duplicator.RegisterEntityClass("gmod_wire_expression2", MakeWireExpression2, "Pos", "Ang", "Model", "_original", "_name", "_inputs", "_outputs", "_vars", "inc_files", "filepath")
+duplicator.RegisterEntityClass("gmod_wire_expression2", MakeWireExpression2, "Pos", "Ang", "Model", "_original", "_name", "_inputs", "_outputs", "_vars", "inc_files", "filepath", "code_author")
 
 --------------------------------------------------
 -- Emergency shutdown (beta testing so far)
 --------------------------------------------------
 local average_ram = 0
-local enable = CreateConVar( 
-	"wire_expression2_ram_emergency_shutdown_enable", "0", {FCVAR_ARCHIVE}, 
-	"Enable/disable the emergency shutdown feature. Requires map reload after change." )
+local enable = CreateConVar(
+	"wire_expression2_ram_emergency_shutdown_enable", "0", {FCVAR_ARCHIVE},
+	"Enable/disable the emergency shutdown feature." )
 
-local average_halt_multiplier = CreateConVar( 
-	"wire_expression2_ram_emergency_shutdown_spike", "4", {FCVAR_ARCHIVE}, 
+local average_halt_multiplier = CreateConVar(
+	"wire_expression2_ram_emergency_shutdown_spike", "4", {FCVAR_ARCHIVE},
 	"if (current_ram > average_ram * spike_convar) then shut down all E2s" )
 
-local halt_max_amount = CreateConVar( 
-	"wire_expression2_ram_emergency_shutdown_total", "512", {FCVAR_ARCHIVE}, 
+local halt_max_amount = CreateConVar(
+	"wire_expression2_ram_emergency_shutdown_total", "512", {FCVAR_ARCHIVE},
 	"This is in kilobytes, if (current_ram > total_convar) then shut down all E2s" )
 
-if enable:GetBool() then
+local function enableEmergencyShutdown()
 	hook.Remove( "Think", "wire_expression2_emergency_shutdown" ) -- remove old hook
-	hook.Add( "Think", "wire_expression2_emergency_shutdown", function()
-		local current_ram = collectgarbage("count")
-		if average_ram == 0 then -- set up initial value
-			average_ram = current_ram
-		else
-			-- calculate average
-			average_ram = average_ram * 0.95 + current_ram * 0.05
+	if enable:GetBool() then
+		hook.Add( "Think", "wire_expression2_emergency_shutdown", function()
+			local current_ram = collectgarbage("count")
+			if average_ram == 0 then -- set up initial value
+				average_ram = current_ram
+			else
+				-- calculate average
+				average_ram = average_ram * 0.95 + current_ram * 0.05
 
-			if current_ram > average_ram * average_halt_multiplier:GetFloat() or -- if the current ram spikes
-				current_ram > halt_max_amount:GetInt() * 1000 then -- or if the current ram goes over a set limit
+				if current_ram > average_ram * average_halt_multiplier:GetFloat() or -- if the current ram spikes
+					current_ram > halt_max_amount:GetInt() * 1000 then -- or if the current ram goes over a set limit
 
-				local e2s = ents.FindByClass("gmod_wire_expression2") -- find all E2s and halt them
-				for k,v in pairs( e2s ) do
-					if not v.error then
-						-- immediately clear any memory the E2 may be holding
-						v:PCallHook("destruct")
-						v:ResetContext()
-						v:PCallHook("construct")
+					local e2s = ents.FindByClass("gmod_wire_expression2") -- find all E2s and halt them
+					for _,v in ipairs( e2s ) do
+						if not v.error then
+							-- immediately clear any memory the E2 may be holding
+							hook.Run("Wire_EmergencyRamClear")
+							v:Destruct()
+							v:ResetContext()
+							v:PCallHook("construct")
 
-						-- Notify the user why we shut down
-						v:Error( "High server RAM usage detected! Emergency E2 shutdown!" )
+							-- Notify the user why we shut down
+							v:Error( "High server RAM usage detected! Emergency E2 shutdown!" )
+						end
 					end
+					collectgarbage() -- collect the garbage now
+					timer.Simple(0,collectgarbage) -- timers fix everything
+					average_ram = collectgarbage("count") -- reset average ram when we're done
 				end
-				collectgarbage() -- collect the garbage now
-				average_ram = collectgarbage("count") -- reset average ram when we're done
 			end
-		end
-	end)
+		end)
+	end
 end
+
+enableEmergencyShutdown()
+cvars.AddChangeCallback( "wire_expression2_ram_emergency_shutdown_enable", enableEmergencyShutdown )

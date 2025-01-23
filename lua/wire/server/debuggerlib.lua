@@ -1,4 +1,8 @@
-local formatPort = {}
+local formatPort = setmetatable({}, { __index = function(_, k)
+	return function() return k end
+end
+})
+
 WireLib.Debugger = { formatPort = formatPort } -- Make it global
 function formatPort.NORMAL(value)
 	return string.format("%.3f",value)
@@ -13,7 +17,7 @@ function formatPort.VECTOR(value)
 end
 
 function formatPort.ANGLE(value)
-	return string.format("(%.1f,%.1f,%.1f)", value.p, value.y, value.r)
+	return string.format("(%.1f,%.1f,%.1f)", value[1], value[2], value[3])
 end
 
 formatPort.ENTITY = function(ent)
@@ -42,8 +46,6 @@ function formatPort.MATRIX4(value)
 		  RetText = RetText..",41="..value[13]..",42="..value[14]..",43="..value[15]..",44="..value[16].."]"
 	return RetText
 end
-
-function formatPort.RANGER(value) return "ranger" end
 
 function formatPort.ARRAY(value, OrientVertical)
 	local RetText = ""
@@ -81,7 +83,7 @@ function formatPort.ARRAY(value, OrientVertical)
 			RetText = RetText..tostring(Element)
 		elseif(type(Element) == "Weapon") then --weapon
 			RetText = RetText..tostring(Element)..Element:GetClass()
-		elseif(type(Element) == "PhysObj" and e2_tostring_bone(Element) != "(null)") then --Bone
+		elseif(type(Element) == "PhysObj" and e2_tostring_bone(Element) ~= "(null)") then --Bone
 			RetText = RetText..formatPort.BONE(Element)
 		else
 			RetText = RetText.."No Display for "..type(Element)
@@ -153,7 +155,6 @@ function formatPort.TABLE(value, OrientVertical)
 	RetText = string.sub(RetText,1,-3)
 	return "{"..RetText.."}"
 end
-
 
 function WireLib.registerDebuggerFormat(typename, func)
 	formatPort[typename:upper()] = func

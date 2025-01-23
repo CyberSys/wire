@@ -30,59 +30,87 @@ SWEP.worldModel = "models/weapons/w_pistol.mdl"
 if CLIENT then return end
 
 function SWEP:PrimaryAttack()
-	local trace = self:GetOwner():GetEyeTrace()
-	if IsValid(trace.Entity) and trace.Entity:GetClass() == "gmod_wire_pod" and gamemode.Call("PlayerUse", self:GetOwner(), trace.Entity) then
+	local ply = self:GetOwner()
+	local trace = ply:GetEyeTrace()
+	if IsValid(trace.Entity) and trace.Entity:GetClass() == "gmod_wire_pod" and gamemode.Call("PlayerUse", ply, trace.Entity) then
 		self.Linked = trace.Entity
-		self:GetOwner():ChatPrint("Remote Controller linked.")
+		ply:ChatPrint("Remote Controller linked.")
 	end
 end
 
 function SWEP:Holster()
-	if (self.Linked) then
-		self:Off()
+	local ply = self:GetOwner()
+	if IsValid(ply) and self.Linked then
+		self:Off(ply)
 	end
 	return true
 end
 
 function SWEP:OnDrop()
-	if (self.Linked) then
-		self:Off()
-		self.Linked = nil
+	local ply = self:GetOwner()
+	if IsValid(ply) and self.Linked then
+		self:Off(ply)
+	end
+	self.Linked = nil
+end
+
+function SWEP:On(ply)
+	if IsValid(self.Linked) and self.Linked.HasPly and self.Linked:HasPly() then
+		if WireLib.CanTool(ply, self.Linked, "remotecontroller") then
+			if self.Linked.RC then
+				self.Linked:RCEject(self.Linked:GetPly())
+			else
+				self.Linked:GetPly():ExitVehicle()
+			end
+		else
+			ply:ChatPrint("Pod is in use.")
+			return
+		end
+	end
+
+	self.Active = true
+	self.OldMoveType = not ply:InVehicle() and ply:GetMoveType() or MOVETYPE_WALK
+	self.InitialAngle = ply:EyeAngles()
+	ply:SetMoveType(MOVETYPE_NONE)
+	ply:DrawViewModel(false)
+	ply.using_wire_remote_control = true
+
+	if IsValid(self.Linked) and self.Linked.PlayerEntered then
+		self.Linked:PlayerEntered(ply, self)
 	end
 end
 
-function SWEP:On()
-	self.Active = true
-	self.OldMoveType = self:GetOwner():GetMoveType()
-	self:GetOwner():SetMoveType(MOVETYPE_NONE)
-	self:GetOwner():DrawViewModel(false)
-	if (self.Linked and self.Linked:IsValid()) then
-		self.Linked:PlayerEntered( self:GetOwner(), self )
-	end
-end
-function SWEP:Off()
+function SWEP:Off(ply)
 	if self.Active then
-		self:GetOwner():SetMoveType(self.OldMoveType or MOVETYPE_WALK)
+		ply:SetMoveType(self.OldMoveType or MOVETYPE_WALK)
 	end
+
 	self.Active = nil
 	self.OldMoveType = nil
-	self:GetOwner():DrawViewModel(true)
-	if (self.Linked and self.Linked:IsValid()) then
-		self.Linked:PlayerExited( self:GetOwner() )
+
+	ply:DrawViewModel(true)
+	ply.using_wire_remote_control = false
+
+	if IsValid(self.Linked) and self.Linked:GetPly() == ply then
+		self.Linked:PlayerExited()
 	end
 end
 
 function SWEP:Think()
-	if (!self.Linked) then return end
-	if (self:GetOwner():KeyPressed( IN_USE )) then
-		if (!self.Active) then
-			self:On()
+	if not self.Linked then return end
+	local ply = self:GetOwner()
+	if not IsValid(ply) then return end
+
+	if ply:KeyPressed(IN_USE) then
+		if not self.Active then
+			self:On(ply)
 		else
-			self:Off()
+			self:Off(ply)
 		end
 	end
 end
 
-function SWEP:Deploy()
-	return true
-end
+hook.Add("PlayerNoClip", "wire_remotecontroller_antinoclip", function(ply, cmd)
+	if ply.using_wire_remote_control then return false end
+end)
+

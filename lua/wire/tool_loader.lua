@@ -63,7 +63,7 @@ if SERVER then
 	-- Default MakeEnt function, override to use a different MakeWire* function
 	function WireToolObj:MakeEnt( ply, model, Ang, trace )
 		local ent = WireLib.MakeWireEnt( ply, {Class = self.WireClass, Pos=trace.HitPos, Angle=Ang, Model=model}, self:GetConVars() )
-		if ent.RestoreNetworkVars then ent:RestoreNetworkVars(self:GetDataTables()) end
+		if ent and ent.RestoreNetworkVars then ent:RestoreNetworkVars(self:GetDataTables()) end
 		return ent
 	end
 
@@ -74,8 +74,10 @@ if SERVER then
 	--
 	-- to prevent update, set TOOL.NoLeftOnClass = true
 	function WireToolObj:LeftClick_Update( trace )
-		if trace.Entity.Setup then trace.Entity:Setup(self:GetConVars()) end
-		if trace.Entity.RestoreNetworkVars then trace.Entity:RestoreNetworkVars(self:GetDataTables()) end
+		if trace.Entity:IsValid() then
+			if trace.Entity.Setup then trace.Entity:Setup(self:GetConVars()) end
+			if trace.Entity.RestoreNetworkVars then trace.Entity:RestoreNetworkVars(self:GetDataTables()) end
+		end
 	end
 
 	--
@@ -89,7 +91,7 @@ if SERVER then
 		if self:GetClientNumber( "parent" ) == 1 then
 			if (trace.Entity:IsValid()) then
 				-- Nocollide the gate to the prop to make adv duplicator (and normal duplicator) find it
-				if (!self.ClientConVar.noclip or self:GetClientNumber( "noclip" ) == 1) then
+				if (not self.ClientConVar.noclip or self:GetClientNumber( "noclip" ) == 1) then
 					nocollide = constraint.NoCollide( ent, trace.Entity, 0,trace.PhysicsBone )
 				end
 
@@ -215,7 +217,7 @@ function WireToolObj:GetModel()
 	local model_convar = self:GetClientInfo( "model" )
 	if self.ClientConVar.modelsize then
 		local modelsize = self:GetClientInfo( "modelsize" )
-		if modelsize != "" then
+		if modelsize ~= "" then
 			local model = string.sub(model_convar, 1, -5) .."_".. modelsize .. string.sub(model_convar, -4)
 			if self:CheckValidModel(model) then return model end
 			model = string.GetPathFromFilename(model_convar) .. modelsize .."_".. string.GetFileFromFilename(model_convar)
@@ -353,20 +355,34 @@ end
 -- function used by TOOL.BuildCPanel
 WireToolHelpers = {}
 
-if CLIENT then
-	-- gets the TOOL since TOOL.BuildCPanel isn't passed this var. wts >_<
-	local function GetTOOL(mode)
-		for _,wep in ipairs(LocalPlayer():GetWeapons()) do
-			if wep:GetClass() == "gmod_tool" then
-				return wep:GetToolObject(mode)
-			end
+-- gets the TOOL since TOOL.BuildCPanel isn't passed this var. wts >_<
+function WireToolHelpers.GetTOOL(mode, ply)
+	if CLIENT then ply = LocalPlayer() end
+	if not ply then return end
+
+	for _,wep in ipairs(ply:GetWeapons()) do
+		if wep:GetClass() == "gmod_tool" then
+			return wep:GetToolObject(mode)
 		end
 	end
+end
 
+-- similar to GetTool (above), gets the specified tool, but only if it's the currently actively held weapon by the player
+function WireToolHelpers.GetActiveTOOL(mode, ply)
+	if CLIENT then ply = LocalPlayer() end
+	if not ply then return end
+
+	local activeWep = ply:GetActiveWeapon()
+	if not IsValid(activeWep) or activeWep:GetClass() ~= "gmod_tool" or activeWep.Mode ~= mode then return end
+
+	return activeWep:GetToolObject(mode)
+end
+
+if CLIENT then
 	-- makes the preset control for use cause we're lazy
 	function WireToolHelpers.MakePresetControl(panel, mode, folder)
 		if not mode or not panel then return end
-		local TOOL = GetTOOL(mode)
+		local TOOL = WireToolHelpers.GetTOOL(mode)
 		if not TOOL then return end
 		local ctrl = vgui.Create( "ControlPresets", panel )
 		ctrl:SetPreset(folder or mode)
@@ -397,12 +413,51 @@ if CLIENT then
 
 	-- adds the neato model select control
 	function WireToolHelpers.MakeModelSel(panel, mode)
-		local TOOL = GetTOOL(mode)
+		local TOOL = WireToolHelpers.GetTOOL(mode)
 		if not TOOL then return end
 		ModelPlug_AddToCPanel(panel, TOOL.short_name, TOOL.Mode, true)
 	end
 end
 
+function WireToolHelpers.SetupSingleplayerClickHacks(TOOL) end -- empty stub outside of Singleplayer
+if game.SinglePlayer() then -- wtfgarry
+	-- In Singleplayer, "Because its Predicted", LeftClick/RightClick/Reload don't fire Clientside. Lets work around that
+	if SERVER then
+		util.AddNetworkString("wire_singleplayer_tool_wtfgarry")
+		local function send_singleplayer_click(ply, funcname, toolname)
+			net.Start("wire_singleplayer_tool_wtfgarry")
+				net.WriteString(funcname)
+				net.WriteString(toolname)
+			net.Send(ply)
+		end
+
+		function WireToolHelpers.SetupSingleplayerClickHacks(TOOL)
+			local originalLeftClick = TOOL.LeftClick
+			function TOOL:LeftClick(trace)
+				send_singleplayer_click(self:GetOwner(), "LeftClick", TOOL.Mode)
+				return originalLeftClick(self, trace)
+			end
+			local originalRightClick = TOOL.RightClick
+			function TOOL:RightClick(trace)
+				send_singleplayer_click(self:GetOwner(), "RightClick", TOOL.Mode)
+				return originalRightClick(self, trace)
+			end
+			local originalReload = TOOL.Reload
+			function TOOL:Reload(trace)
+				send_singleplayer_click(self:GetOwner(), "Reload", TOOL.Mode)
+				return originalReload(self, trace)
+			end
+		end
+	elseif CLIENT then
+		net.Receive( "wire_singleplayer_tool_wtfgarry", function(len)
+			local funcname = net.ReadString()
+			local toolname = net.ReadString()
+			local tool = WireToolHelpers.GetTOOL(toolname)
+			if not tool then return end
+			tool[funcname](tool, LocalPlayer():GetEyeTrace())
+		end)
+	end
+end
 
 
 WireToolSetup = {}
@@ -463,11 +518,18 @@ end
 
 
 -- optional function to add the basic language for basic tools
-function WireToolSetup.BaseLang( pluralname )
+function WireToolSetup.BaseLang()
 	if CLIENT then
 		language.Add( "undone_"..TOOL.WireClass, "Undone Wire "..TOOL.Name )
-		language.Add( "Cleanup_"..TOOL.WireClass, "Wire "..(TOOL.PluralName or pluralname) )
-		language.Add( "Cleaned_"..TOOL.WireClass, "Cleaned Up Wire "..(TOOL.PluralName or pluralname) )
+		if TOOL.PluralName then
+			language.Add( "Cleanup_"..TOOL.WireClass, "Wire "..TOOL.PluralName )
+			language.Add( "Cleaned_"..TOOL.WireClass, "Cleaned Up Wire "..TOOL.PluralName )
+		end
+		for _, info in pairs(TOOL.Information or {}) do
+			if info.text then
+				language.Add("Tool." .. TOOL.Mode .. "." .. info.name, info.text)
+			end
+		end
 	end
 	cleanup.Register(TOOL.WireClass)
 end
@@ -487,23 +549,69 @@ end
 -- The SENT should have ENT:LinkEnt(e), ENT:UnlinkEnt(e), and ENT:ClearEntities()
 -- It should also send ENT.Marks to the client via WireLib.SendMarks(ent)
 -- Pass it true to disable linking multiple entities (ie for Pod Controllers)
-function WireToolSetup.SetupLinking(SingleLink)
+function WireToolSetup.SetupLinking(SingleLink, linkedname)
 	TOOL.SingleLink = SingleLink
+	linkedname = linkedname or "entity"
 	if CLIENT then
-		language.Add( "Tool."..TOOL.Mode..".0", "Primary: Create "..TOOL.Name..", Secondary: Link entities, Reload: Unlink entities" )
-		language.Add( "Tool."..TOOL.Mode..".1", "Now select the entity to link to" .. (SingleLink and "" or " (Tip: Hold shift to link to more entities)"))
-		language.Add( "Tool."..TOOL.Mode..".2", "Now select the entity to unlink" .. (SingleLink and "" or " (Tip: Hold shift to unlink from more entities). Reload on the same controller again to clear all linked entities." ))
+		if TOOL.Information == nil or next(TOOL.Information) == nil then
+			TOOL.Information = {
+				{ name = "left_0", stage = 0 },
+				{ name = "right_0", stage = 0 },
+				{ name = "reload_0", stage = 0 },
+				{ name = "right_1", stage = 1 },
+				{ name = "right_2", stage = 2 },
+			}
+			if not SingleLink then
+				table.insert(TOOL.Information, { name = "info_1", stage = 1 })
+				table.insert(TOOL.Information, { name = "info_2", stage = 2 })
+				table.insert(TOOL.Information, { name = "reload_2", stage = 2 })
+			end
+		end
 
+		language.Add( "Tool."..TOOL.Mode..".left_0", "Create/Update "..TOOL.Name )
+		language.Add( "Tool."..TOOL.Mode..".right_0", "Select a " .. TOOL.Name .. " to link" )
+		language.Add( "Tool."..TOOL.Mode..".reload_0",  "Unlink everything from a " .. TOOL.Name )
+		language.Add( "Tool."..TOOL.Mode..".right_1", "Now select the " .. linkedname .. " to link to" )
+		language.Add( "Tool."..TOOL.Mode..".right_2", "Now select the " .. linkedname .. " to unlink" )
+
+		if not SingleLink then
+			language.Add( "Tool."..TOOL.Mode..".info_1", "Hold shift to link to more")
+			language.Add( "Tool."..TOOL.Mode..".info_2", "Hold shift to unlink from more")
+			language.Add( "Tool."..TOOL.Mode..".reload_2", "Reload on the same controller again to clear all linked entities.")
+		end
+
+		local lastRequested = 0
 		function TOOL:DrawHUD()
 			local trace = self:GetOwner():GetEyeTrace()
-			if self:CheckHitOwnClass(trace) and trace.Entity.Marks then
-				local markerpos = trace.Entity:GetPos():ToScreen()
-				for _, ent in pairs(trace.Entity.Marks) do
-					if IsValid(ent) then
-						local markpos = ent:GetPos():ToScreen()
-						surface.SetDrawColor( 255,255,100,255 )
-						surface.DrawLine( markerpos.x, markerpos.y, markpos.x, markpos.y )
+
+			if not trace.Entity then lastRequested = 0 end
+
+			if self:CheckHitOwnClass(trace) then
+				local controller = trace.Entity
+				if controller.WireLinkedEnts and controller.WireLinkedEnts.Marks then
+					local markerpos = controller:GetPos():ToScreen()
+					for _, ent in pairs(controller.WireLinkedEnts.Marks) do
+						if IsValid(ent) then
+							local markpos = ent:GetPos():ToScreen()
+							surface.SetDrawColor( 255,255,100,255 )
+							surface.DrawLine( markerpos.x, markerpos.y, markpos.x, markpos.y )
+						end
 					end
+				end
+
+				-- request updated marks when the player looks at the entity
+				if CurTime() - lastRequested > 1 then -- at most once per second
+					if not controller.WireLinkedEnts or CurTime() > controller.WireLinkedEnts.LastUpdated then
+						net.Start("WireLinkedEntsRequest")
+							net.WriteEntity(controller)
+							if controller.WireLinkedEnts then
+								net.WriteFloat(controller.WireLinkedEnts.LastUpdated)
+							else
+								net.WriteFloat(0)
+							end
+						net.SendToServer()
+					end
+					lastRequested = CurTime()
 				end
 			end
 		end
@@ -579,6 +687,54 @@ function WireToolSetup.SetupLinking(SingleLink)
 			WireToolObj.Think(self) -- Basic ghost
 		end
 	end
+end
+
+-- For transmitting the yellow lines showing links between controllers and ents, as used by the Adv Entity Marker
+if SERVER then
+	util.AddNetworkString("WireLinkedEnts")
+	util.AddNetworkString("WireLinkedEntsRequest")
+	function WireLib.SendMarks(controller, marks)
+		if not IsValid(controller) then return end
+		controller.WireLinkedEnts = {
+			Marks = marks or controller.Marks,
+			LastUpdated = CurTime()
+		}
+	end
+	net.Receive("WireLinkedEntsRequest", function(netlen, ply)
+		local controller = net.ReadEntity()
+		local lastUpdated = net.ReadFloat()
+
+		if not IsValid(controller) then return end
+		if not controller.WireLinkedEnts then return end
+		if not controller.WireLinkedEnts.Marks then return end
+		if controller.WireLinkedEnts.LastUpdated < lastUpdated then return end
+
+		net.Start("WireLinkedEnts")
+			net.WriteEntity(controller)
+			net.WriteFloat(controller.WireLinkedEnts.LastUpdated)
+			net.WriteUInt(#controller.WireLinkedEnts.Marks, 16)
+			for _,v in pairs(controller.WireLinkedEnts.Marks) do
+				net.WriteEntity(v)
+			end
+		net.Send( ply )
+	end)
+else
+	net.Receive("WireLinkedEnts", function(netlen)
+		local controller = net.ReadEntity()
+		local lastUpdated = net.ReadFloat()
+		if IsValid(controller) then
+			controller.WireLinkedEnts = {
+				Marks = {},
+				LastUpdated = lastUpdated
+			}
+			for _=1, net.ReadUInt(16) do
+				local link = net.ReadEntity()
+				if IsValid(link) then
+					table.insert(controller.WireLinkedEnts.Marks, link)
+				end
+			end
+		end
+	end)
 end
 
 LoadTools()

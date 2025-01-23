@@ -1,9 +1,9 @@
 --------------------------------------------------------
 -- Custom umsg System
 --------------------------------------------------------
-local EGP = EGP
+local EGP = E2Lib.EGP
 
-local CurSender
+local CurSender = NULL
 local LastErrorTime = 0
 --[[ Transmit Sizes:
 	Angle = 12
@@ -21,7 +21,7 @@ local LastErrorTime = 0
 EGP.umsg = {}
 
 function EGP.umsg.Start( name, sender )
-	if CurSender then
+	if CurSender:IsValid() then
 		if (LastErrorTime + 1 < CurTime()) then
 			ErrorNoHalt("[EGP] Umsg error. It seems another umsg is already sending, but it occured over 1 second ago. Ending umsg.")
 			EGP.umsg.End()
@@ -35,15 +35,34 @@ function EGP.umsg.Start( name, sender )
 	end
 	CurSender = sender
 
-	net.Start( name )
+	net.Start(name)
 	return true
 end
 
-function EGP.umsg.End()
-	if CurSender then
+function EGP.umsg.End( ent )
+	if CurSender:IsValid() then
 		if not EGP.IntervalCheck[CurSender] then EGP.IntervalCheck[CurSender] = { bytes = 0, time = 0 } end
-		EGP.IntervalCheck[CurSender].bytes = EGP.IntervalCheck[CurSender].bytes + net.BytesWritten()
+		local bytes = net.BytesWritten()
+		if bytes then
+			EGP.IntervalCheck[CurSender].bytes = EGP.IntervalCheck[CurSender].bytes + bytes
+		else
+			ErrorNoHalt("Tried to end EGP net message outside of net context?")
+		end
+
+		if ent.Users then
+			local sendTbl = {}
+			for ply, _ in pairs(ent.Users) do
+				if ply:IsValid() then
+					table.insert(sendTbl, ply)
+				end
+			end
+
+			net.Send(sendTbl)
+		else
+			net.Broadcast()
+		end
+	else
+		net.Send(NULL)
 	end
-	net.Broadcast()
-	CurSender = nil
+	CurSender = NULL
 end

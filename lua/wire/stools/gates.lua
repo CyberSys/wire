@@ -2,7 +2,6 @@
 WireToolSetup.setCategory( "Chips, Gates" )
 WireToolSetup.open( "gates", "Gates", "gmod_wire_gate", nil, "Gates" )
 
-WireToolSetup.BaseLang()
 WireToolSetup.SetupMax(100)
 
 if SERVER then
@@ -16,7 +15,6 @@ if CLIENT then
 
 	language.Add( "Tool.wire_gates.name", "Gates Tool (Wire)" )
 	language.Add( "Tool.wire_gates.desc", "Spawns gates for use with the wire system." )
-	language.Add( "Tool.wire_gates.0", "Primary: Create/Update Gate, Secondary: Copy Gate, Reload: Increase angle offset by 45 degrees, Shift+Reload: Unparent gate (If parented)." )
 
 	TOOL.ClientConVar["model"] = "models/jaanus/wiretool/wiretool_gate.mdl"
 	TOOL.ClientConVar["parent"] = 0
@@ -33,31 +31,38 @@ if CLIENT then
 
 	WireToolSetup.setToolMenuIcon( "bull/gates/gate_logic_and" )
 
+	TOOL.Information = {
+		{ name = "left", text = "Create/Update Gate" },
+		{ name = "right", text = "Copy Gate" },
+		{ name = "reload", text = "Increase angle offset by 45 degrees" },
+		{ name = "reload_shift", text = "Shift+Reload: Unparent gate (If parented)" },
+	}
+
 	function TOOL.BuildCPanel( panel )
 		----------------- GATE SELECTION & SEARCHING
 
 		-- Create panels
 		local searchbox = vgui.Create( "DTextEntry" )
-		
+
 		searchbox:SetValue( "Search..." )
-		
-		local old = searchbox.OnGetFocus
+
+		local oldOnGetFocus = searchbox.OnGetFocus
 		function searchbox:OnGetFocus()
 			if self:GetValue() == "Search..." then -- If "Search...", erase it
 				self:SetValue( "" )
 			end
-			old( self )
+			oldOnGetFocus( self )
 		end
-		
+
 		-- On lose focus
-		local old = searchbox.OnLoseFocus
+		local oldOnLoseFocus = searchbox.OnLoseFocus
 		function searchbox:OnLoseFocus()
 			if self:GetValue() == "" then -- if empty, reset "Search..." text
 				timer.Simple( 0, function() self:SetValue( "Search..." ) end )
 			end
-			old( self )
+			oldOnLoseFocus( self )
 		end
-		
+
 		local holder = vgui.Create( "DPanel" )
 		holder:SetTall( 500 )
 
@@ -79,7 +84,7 @@ if CLIENT then
 				local name = gate.name
 				local lowname = string_lower(name)
 				if string_find( lowname, text, 1, true ) then -- If it has ANY match at all
-					results[#results+1] = { name = gate.name, group = gate.group, action = action, dist = WireLib.levenshtein( text, lowname ) }
+					results[#results+1] = { name = gate.name, group = gate.group, action = action, dist = WireLib.levenshtein( text, lowname ), description = gate.description }
 				end
 			end
 
@@ -90,8 +95,6 @@ if CLIENT then
 
 		-- Main searching
 		local searching
-		local anim = 0
-		local animstart = 0
 		function searchbox:OnTextChanged()
 			local text = searchbox:GetValue()
 			if text ~= "" then
@@ -115,6 +118,10 @@ if CLIENT then
 						line:SetSelected( true )
 					end
 					line.action = result.action
+					if result.description then
+						line.description = result.description
+						line:SetTooltip(result.description)
+					end
 				end
 			else
 				if searching then
@@ -142,9 +149,10 @@ if CLIENT then
 			end
 
 			line:SetSelected(true) -- Select new
+			panel.GateDescription:SetText(line.description or "")
 			RunConsoleCommand( "wire_gates_action", line.action )
 		end
-		
+
 		function searchbox:OnEnter()
 			if #searchlist:GetLines() > 0 then
 				searchlist:OnClickLine( searchlist:GetLine( 1 ) )
@@ -152,7 +160,7 @@ if CLIENT then
 		end
 
 		panel:AddItem( searchbox )
-		
+
 		tree:Dock( FILL )
 
 		-- Set sizes & other settings
@@ -174,17 +182,22 @@ if CLIENT then
 				local action, gate = subtree[index].action, subtree[index].gate
 				local node2 = node:AddNode( gate.name or "No name found :(" )
 				node2.name = gate.name
+				if gate.description then
+					node2.description = gate.description
+					node2:SetTooltip(gate.description)
+				end
 				node2.action = action
 				function node2:DoClick()
 					RunConsoleCommand( "wire_gates_Action", self.action )
+					panel.GateDescription:SetText(self.description or "")
 				end
 				node2.Icon:SetImage( "icon16/newspaper.png" )
 			end
 			tree:InvalidateLayout()
 		end
-		
+
 		local CategoriesSorted = {}
-		
+
 		for gatetype, gatefuncs in pairs( WireGatesSorted ) do
 			local allowed_gates = {}
 			local any_allowed = false
@@ -198,13 +211,13 @@ if CLIENT then
 				CategoriesSorted[#CategoriesSorted+1] = { gatetype = gatetype, gatefuncs = allowed_gates }
 			end
 		end
-		
+
 		table.sort( CategoriesSorted, function( a, b ) return a.gatetype < b.gatetype end )
 
 		for i=1,#CategoriesSorted do
 			local gatetype = CategoriesSorted[i].gatetype
 			local gatefuncs = CategoriesSorted[i].gatefuncs
-			
+
 			local node = tree:AddNode( gatetype )
 			node.Icon:SetImage( "icon16/folder.png" )
 			FillSubTree( tree, node, gatefuncs )
@@ -216,15 +229,16 @@ if CLIENT then
 		-- add it all to the main panel
 		panel:AddItem( holder )
 
+		panel.GateDescription = panel:Help("")
 
 		-- MISCELLANEOUS PLACEMENT OPTIONS, AND MODEL
-		
+
 		local nocollidebox = panel:CheckBox("#WireGatesTool_noclip", "wire_gates_noclip")
 		local parentbox = panel:CheckBox("#WireGatesTool_parent","wire_gates_parent")
 
 		panel:Help("When parenting, you should check the nocollide box, or adv duplicator might not dupe the gate.")
 
-		local angleoffset = panel:NumSlider( "#WireGatesTool_angleoffset","wire_gates_angleoffset", 0, 360, 0 )
+		panel:NumSlider( "#WireGatesTool_angleoffset","wire_gates_angleoffset", 0, 360, 0 )
 
 		WireDermaExts.ModelSelect(panel, "wire_gates_model", list.Get("Wire_gate_Models"), 3, true)
 
@@ -242,13 +256,15 @@ if CLIENT then
 	end
 end
 
+WireToolSetup.BaseLang()
+
 if SERVER then
-	function TOOL:GetConVars() 
+	function TOOL:GetConVars()
 		return self:GetClientInfo( "action" ), self:GetClientNumber( "noclip" ) == 1
 	end
-	
+
 	function TOOL:MakeEnt( ply, model, Ang, trace )
-		return MakeWireGate( ply, trace.HitPos, Ang, model, self:GetConVars() )
+		return WireLib.MakeWireGate( ply, trace.HitPos, Ang, model, self:GetConVars() )
 	end
 end
 
@@ -277,7 +293,7 @@ end
 --------------------
 function TOOL:Reload( trace )
 	if self:GetOwner():KeyDown( IN_SPEED ) then -- Unparent
-		if (!trace or !trace.Hit) then return false end
+		if not trace or not trace.Hit then return false end
 		if (CLIENT and trace.Entity) then return true end
 		if (trace.Entity:GetParent():IsValid()) then
 

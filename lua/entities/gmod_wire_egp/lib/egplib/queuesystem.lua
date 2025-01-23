@@ -1,42 +1,34 @@
 --------------------------------------------------------
 -- EGP Queue System
 --------------------------------------------------------
-local EGP = EGP
+local EGP = E2Lib.EGP
 
-EGP.Queue = {}
+EGP.Queue = WireLib.RegisterPlayerTable()
 
 function EGP:AddQueueObject( Ent, ply, Function, Object )
-	if (!self.Queue[ply]) then self.Queue[ply] = {} end
+	if not self.Queue[ply] then self.Queue[ply] = {} end
 	local n = #self.Queue[ply]
 	if (n > 0) then
 		local LastItem = self.Queue[ply][n]
 		if (LastItem.Ent == Ent and LastItem.Action == "Object") then
-			local found = false
 			for k,v in ipairs( LastItem.Args[1] ) do
-				if (v.index == Object.index) then
-					--self:EditObject( v, Object )
-
+				if v.index == Object.index and not v.remove then
 					if (Object.remove) then -- The object has been removed
-						table.remove( LastItem.Args[1], k )
-					elseif (v.ID != Object.ID) then -- Not the same kind of object, create new
-						found = true
+						LastItem.Args[1][k] = Object
+					elseif (v.ID ~= Object.ID) then -- Not the same kind of object, create new
 						if (v.OnRemove) then v:OnRemove() end
-						local Obj = self:GetObjectByID( Object.ID )
-						self:EditObject( Obj, Object:DataStreamInfo() )
+						local Obj = table.Copy(EGP.Objects[Object.ID])
+						Obj:Initialize(Object:DataStreamInfo())
 						Obj.index = v.index
-						if (Obj.OnCreate) then Obj:OnCreate() end
 						LastItem.Args[1][k] = Obj
 					else -- Edit
-						found = true
-						self:EditObject( v, Object:DataStreamInfo() )
+						v:EditObject(Object:DataStreamInfo())
 					end
-
-					break
+					return
 				end
 			end
-			if (!found) then
-				LastItem.Args[1][#LastItem.Args[1]+1] = Object
-			end
+			-- Not found, add it to queue
+			LastItem.Args[1][#LastItem.Args[1]+1] = Object
 		else
 			self:AddQueue( Ent, ply, Function, "Object", { Object } )
 		end
@@ -46,7 +38,7 @@ function EGP:AddQueueObject( Ent, ply, Function, Object )
 end
 
 function EGP:AddQueue( Ent, ply, Function, Action, ... )
-	if (!self.Queue[ply]) then self.Queue[ply] = {} end
+	if not self.Queue[ply] then self.Queue[ply] = {} end
 	local n = #self.Queue[ply]
 	if (n > 0) then
 		local LastItem = self.Queue[ply][n]
@@ -58,7 +50,7 @@ function EGP:AddQueue( Ent, ply, Function, Action, ... )
 end
 
 function EGP:InsertQueueObjects( Ent, ply, Function, Objects )
-	if (!self.Queue[ply]) then self.Queue[ply] = {} end
+	if not self.Queue[ply] then self.Queue[ply] = {} end
 	local n = #self.Queue[ply]
 	if (n > 0) then
 		local FirstItem = self.Queue[ply][1]
@@ -76,12 +68,12 @@ function EGP:InsertQueueObjects( Ent, ply, Function, Objects )
 end
 
 function EGP:InsertQueue( Ent, ply, Function, Action, ... )
-	if (!self.Queue[ply]) then self.Queue[ply] = {} end
+	if not self.Queue[ply] then self.Queue[ply] = {} end
 	table.insert( self.Queue[ply], 1, { Action = Action, Function = Function, Ent = Ent, Args = {...} } )
 end
 
 function EGP:GetNextItem( ply )
-	if (!self.Queue[ply]) then return false end
+	if not self.Queue[ply] then return false end
 	if (#self.Queue[ply] <= 0) then return false end
 	return table.remove( self.Queue[ply], 1 )
 end
@@ -90,7 +82,7 @@ local AlreadyChecking = 0
 
 function EGP:SendQueueItem( ply )
 	local NextAction = self:GetNextItem( ply )
-	if (NextAction != false) then
+	if (NextAction ~= false) then
 		local Func = NextAction.Function
 		local Ent = NextAction.Ent
 		local Args = NextAction.Args
@@ -100,7 +92,7 @@ function EGP:SendQueueItem( ply )
 			Func( Ent, ply )
 		end
 
-		if (CurTime() != AlreadyChecking) then -- Had to use this hacky way of checking, because the E2 triggered 4 times for some strange reason. If anyone can figure out why, go ahead and tell me.
+		if (CurTime() ~= AlreadyChecking) then -- Had to use this hacky way of checking, because the E2 triggered 4 times for some strange reason. If anyone can figure out why, go ahead and tell me.
 			AlreadyChecking = CurTime()
 
 			-- Check if the queue has no more items for this screen
@@ -130,14 +122,17 @@ end
 timer.Create("EGP_Queue_Process", 1, 0, function()
 	local removetab = {}
 	for ply, tab in pairs(EGP.Queue) do
-		if !IsValid(ply) then removetab[ply] = true continue end
-		EGP:SendQueueItem(ply)
-	end 
+		if IsValid(ply) then
+			EGP:SendQueueItem(ply)
+		else
+			removetab[ply] = true
+		end
+	end
 	for ply in pairs(removetab) do EGP.Queue[ply] = nil end
 end)
 
 function EGP:GetQueueItemsForScreen( ply, Ent )
-	if (!self.Queue[ply]) then return {} end
+	if not self.Queue[ply] then return {} end
 	local ret = {}
 	for k,v in ipairs( self.Queue[ply] ) do
 		if (v.Ent == Ent) then

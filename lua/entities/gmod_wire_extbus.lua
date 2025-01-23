@@ -31,7 +31,7 @@ function ENT:Initialize()
 end
 
 function ENT:Think()
-  self.BaseClass.Think(self)
+  BaseClass.Think(self)
 
   self.DataRate = self.DataBytes
   self.DataBytes = 0
@@ -42,6 +42,7 @@ function ENT:Think()
 end
 
 function ENT:ReadCell(Address)
+  Address = math.floor(Address)
   if (Address >= 0) and (Address < self.ControlDataSize) then
     if Address < 16 then
       if Address % 2 == 0 then
@@ -78,19 +79,45 @@ function ENT:ReadCell(Address)
   return nil
 end
 
+local DeviceType = {
+  ["gmod_wire_extbus"]        = 2,
+  ["gmod_wire_addressbus"]    = 3,
+  ["gmod_wire_cpu"]           = 4,
+  ["gmod_wire_gpu"]           = 5,
+  ["gmod_wire_spu"]           = 6,
+  ["gmod_wire_hdd"]           = 7,
+  ["gmod_wire_dhdd"]          = 8,
+  ["gmod_wire_datarate"]      = 9,
+  ["gmod_wire_cd_ray"]        = 10,
+  ["gmod_wire_consolescreen"] = 11,
+  ["gmod_wire_digitalscreen"] = 12,
+  ["gmod_wire_dataplug"]      = 13,
+  ["gmod_wire_datasocket"]    = 14,
+  ["gmod_wire_keyboard"]      = 15,
+  ["gmod_wire_oscilloscope"]  = 16,
+  ["gmod_wire_soundemitter"]  = 17,
+  ["gmod_wire_value"]         = 18,
+  ["gmod_wire_dataport"]      = 19,
+  ["gmod_wire_gate"]          = 20,
+}
+
+local function getDeviceType(class)
+  return DeviceType[class] or 1
+end
+
 local recursiveCounter = 0
 function ENT:GetDeviceInfo(deviceEnt)
-  local deviceType = CPULib.GetDeviceType(deviceEnt:GetClass())
-  if deviceEnt.MySocket then
-    if deviceEnt.MySocket.Inputs.Memory.Src then
-      self:GetDeviceInfo(deviceEnt.MySocket.Inputs.Memory.Src)
+  local deviceType = getDeviceType(deviceEnt:GetClass())
+  if deviceEnt.Socket then
+    if deviceEnt.Socket.Inputs.Memory.Src then
+      self:GetDeviceInfo(deviceEnt.Socket.Inputs.Memory.Src)
     else
       table.insert(self.ControlData,14)
     end
     return
-  elseif deviceEnt.MyPlug then
-    if deviceEnt.MyPlug.Inputs.Memory.Src then
-      self:GetDeviceInfo(deviceEnt.MyPlug.Inputs.Memory.Src)
+  elseif deviceEnt.Plug then
+    if deviceEnt.Plug.Inputs.Memory.Src then
+      self:GetDeviceInfo(deviceEnt.Plug.Inputs.Memory.Src)
     else
       table.insert(self.ControlData,13)
     end
@@ -117,6 +144,7 @@ function ENT:GetDeviceInfo(deviceEnt)
 end
 
 function ENT:WriteCell(Address, Value)
+  Address = math.floor(Address)
   if (Address >= 0) and (Address < self.ControlDataSize) then
     -- [0..15] Address bus settings
     -- [16] Control data area size

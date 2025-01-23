@@ -10,10 +10,12 @@ function ENT:Initialize()
 	self:SetMoveType( MOVETYPE_VPHYSICS )
 	self:SetSolid( SOLID_VPHYSICS )
 	self:GetPhysicsObject():EnableGravity(false)
-	
-	self.Inputs = WireLib.CreateInputs(self,{"On", "X", "Y", "Z", "Target [VECTOR]", "Direction [VECTOR]", "Angle [ANGLE]"})
-	
+
+	self.Inputs = WireLib.CreateInputs(self,{"On", "X", "Y", "Z", "Target [VECTOR]", "Direction [VECTOR]", "Angle [ANGLE]", "AngleOffset [ANGLE]"})
+
 	self.XYZ = Vector()
+	self.TargetAngOffset = Matrix()
+	self.TargetAngOffset:SetAngles(Angle(90,0,0))
 end
 
 function ENT:TriggerInput(name,value)
@@ -23,7 +25,7 @@ function ENT:TriggerInput(name,value)
 		self.TargetPos = nil
 		self.TargetDir = nil
 		self.TargetAng = nil
-	
+
 		if name == "X" then
 			self.XYZ.x = value
 			self.TargetPos = self.XYZ
@@ -40,13 +42,16 @@ function ENT:TriggerInput(name,value)
 			self.TargetDir = value
 		elseif name == "Angle" then
 			self.TargetAng = value
+		elseif name == "AngleOffset" then
+			self.TargetAngOffset = Matrix()
+			self.TargetAngOffset:SetAngles(value)
 		end
 	end
 	self:ShowOutput()
 	return true
 end
 
-	
+
 function ENT:Think()
 	if self.On then
 		local ang
@@ -57,7 +62,12 @@ function ENT:Think()
 		elseif self.TargetAng then
 			ang = self.TargetAng
 		end
-		if ang then self:SetAngles(ang + Angle(90,0,0)) end
+		if ang then
+			local m = Matrix()
+			m:SetAngles(ang)
+			m = m * self.TargetAngOffset
+			self:SetAngles(m:GetAngles())
+		end
 		-- TODO: Put an option in the CPanel for Angle(90,0,0), and other useful directions
 		self:GetPhysicsObject():Wake()
 	end

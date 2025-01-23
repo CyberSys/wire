@@ -7,6 +7,7 @@ WireAddon = 1
 local ents = ents
 local timer = timer
 local string = string
+local math_clamp = math.Clamp
 local table = table
 local hook = hook
 local concommand = concommand
@@ -18,10 +19,12 @@ local IsValid = IsValid
 local tostring = tostring
 local Vector = Vector
 local Color = Color
-local Material = Material
+
+local isvector, isnumber, istable, isstring, isangle, IsEntity, IsColor = isvector, isnumber, istable, isstring, isangle, IsEntity, IsColor
 
 local HasPorts = WireLib.HasPorts -- Very important for checks!
-
+local entIsValid = FindMetaTable("Entity").IsValid
+local entGetTable = FindMetaTable("Entity").GetTable
 
 function WireLib.PortComparator(a,b)
 	return a.Num < b.Num
@@ -46,66 +49,168 @@ end
 local Inputs = {}
 local Outputs = {}
 local CurLink = {}
-
-hook.Add("Think", "WireLib_Think", function()
-	for idx,port in pairs(Outputs) do
-		port.TriggerLimit = 4
-	end
-end)
+local CurTime = CurTime
 
 -- helper function that pcalls an input
 function WireLib.TriggerInput(ent, name, value, ...)
-	if (not IsValid(ent) or not HasPorts(ent) or not ent.Inputs or not ent.Inputs[name]) then return end
-	ent.Inputs[name].Value = value
+	if not entIsValid(ent) or not HasPorts(ent) then return end
 
-	if (not ent.TriggerInput) then return end
-	local ok, ret = xpcall(ent.TriggerInput, debug.traceback, ent, name, value, ...)
+	local entTbl = entGetTable(ent)
+	local inputs = entTbl.Inputs
+
+	if not inputs then return end
+
+	local input = inputs[name]
+	if not input then return end
+
+	local ty = WireLib.DT[input.Type]
+	if ty and not ty.Validator(value) then
+		-- Not copying here is fine since data types are immutable outside E2.
+		value = ty.Zero()
+	end
+
+	input.Value = value
+	local triggerInput = entTbl.TriggerInput
+	if not triggerInput then return end
+
+	-- Limit inputs the same way outputs are limited.
+	-- This is in case a wire input would somehow trigger itself and stack overflow.
+	-- Notably this happens with E2 (postexecute hook), but adding this here in case other wire components do it in the future.
+	local now = CurTime()
+	if input.TriggerTime ~= now then
+		input.TriggerTime = now
+		input.TriggerLimit = 8
+	elseif input.TriggerLimit <= 0 then
+		return
+	else
+		input.TriggerLimit = input.TriggerLimit - 1
+	end
+
+	local ok, ret = xpcall(triggerInput, debug.traceback, ent, name, value, ...)
 	if not ok then
-		local message = string.format("Wire error (%s):\n%s\n", tostring(ent), ret)
-		WireLib.ErrorNoHalt(message)
 		local ply = WireLib.GetOwner(ent)
-		if IsValid(ply) then WireLib.ClientError(message, ply) end
+		local validPly = IsValid(ply)
+		local owner_msg = validPly and (" by %s"):format(tostring(ply)) or ""
+		local message = ("Wire error (%s%s):\n%s\n"):format(tostring(ent), owner_msg, ret)
+		WireLib.ErrorNoHalt(message)
+		if validPly then WireLib.ClientError(message, ply) end
 	end
 end
 
--- an array of data types
+--- Array of data types for Wiremod.
+---@type table<string, { Zero: (fun(): any), Validator: (fun(val: any): boolean) }>
 WireLib.DT = {
 	NORMAL = {
-		Zero = 0
+		Zero = function()
+			return 0
+		end,
+		Validator = isnumber
 	},	-- Numbers
 	VECTOR = {
-		Zero = Vector(0, 0, 0)
+		Zero = Vector,
+		Validator = isvector
+	},
+	VECTOR2 = {
+		Zero = function()
+			return { 0, 0 }
+		end,
+		Validator = function(v2)
+			return istable(v2)
+				and isnumber(v2[1])
+				and isnumber(v2[2])
+		end
+	},
+	VECTOR4 = {
+		Zero = function()
+			return { 0, 0, 0, 0 }
+		end,
+		Validator = function(v4)
+			return istable(v4)
+				and isnumber(v4[1])
+				and isnumber(v4[2])
+				and isnumber(v4[3])
+				and isnumber(v4[4])
+		end
 	},
 	ANGLE = {
-		Zero = Angle(0, 0, 0)
+		Zero = Angle,
+		Validator = isangle
 	},
 	COLOR = {
-		Zero = Color(0, 0, 0)
+		Zero = function()
+			return Color(0, 0, 0)
+		end,
+		Validator = IsColor
 	},
 	ENTITY = {
-		Zero = NULL
+		Zero = function()
+			return NULL
+		end,
+		Validator = IsEntity
 	},
 	STRING = {
-		Zero = ""
+		Zero = function()
+			return ""
+		end,
+		Validator = isstring
 	},
 	TABLE = {
-		Zero = {}
+		Zero = function()
+			return { n = {}, ntypes = {}, s = {}, stypes = {}, size = 0 }
+		end,
+		Validator = function(t)
+			return istable(t)
+				and istable(t.n)
+				and istable(t.ntypes)
+				and istable(t.s)
+				and istable(t.stypes)
+				and isnumber(t.size)
+		end
 	},
 	BIDIRTABLE = {
-		Zero = {},
+		Zero = function()
+			return { n = {}, ntypes = {}, s = {}, stypes = {}, size = 0 }
+		end,
+		Validator = function(t)
+			return istable(t)
+				and istable(t.n)
+				and istable(t.ntypes)
+				and istable(t.s)
+				and istable(t.stypes)
+				and isnumber(t.size)
+		end,
 		BiDir = true
 	},
 	ANY = {
-		Zero = 0
+		Zero = function()
+			return 0
+		end,
+		Validator = function()
+			return true
+		end
 	},
 	ARRAY = {
-		Zero = {}
+		Zero = function()
+			return {}
+		end,
+		Validator = istable
 	},
 	BIDIRARRAY = {
-		Zero = {},
+		Zero = function()
+			return {}
+		end,
+		Validator = istable,
 		BiDir = true
 	},
 }
+
+--- Gets default value of a WireLib type.
+--- Assumes `type` is a valid string type in the WireLib.DT table.
+--- For example `VECTOR` / `NORMAL` / `ARRAY`
+---@param type string
+function WireLib.GetDefaultForType(type)
+	return WireLib.DT[type].Zero()
+end
 
 function WireLib.CreateSpecialInputs(ent, names, types, descs)
 	types = types or {}
@@ -120,7 +225,7 @@ function WireLib.CreateSpecialInputs(ent, names, types, descs)
 			Name = name,
 			Desc = desc,
 			Type = tp,
-			Value = WireLib.DT[ tp ].Zero,
+			Value = WireLib.GetDefaultForType(tp),
 			Material = "tripmine_laser",
 			Color = Color(255, 255, 255, 255),
 			Width = 1,
@@ -137,7 +242,6 @@ function WireLib.CreateSpecialInputs(ent, names, types, descs)
 		Inputs[idx] = port
 	end
 
-	WireLib.SetPathNames(ent, names)
 	WireLib._SetInputs(ent)
 
 	return ent_ports
@@ -156,7 +260,7 @@ function WireLib.CreateSpecialOutputs(ent, names, types, descs)
 			Name = name,
 			Desc = desc,
 			Type = tp,
-			Value = WireLib.DT[ tp ].Zero,
+			Value = WireLib.GetDefaultForType(tp),
 			Connected = {},
 			TriggerLimit = 8,
 			Num = n,
@@ -167,6 +271,7 @@ function WireLib.CreateSpecialOutputs(ent, names, types, descs)
 			idx = idx+1
 		end
 		port.Idx = idx
+
 
 		ent_ports[name] = port
 		Outputs[idx] = port
@@ -187,19 +292,19 @@ function WireLib.AdjustSpecialInputs(ent, names, types, descs)
 		if (ent_ports[name]) then
 			if tp ~= ent_ports[name].Type then
 				timer.Simple(0, function() WireLib.Link_Clear(ent, name) end)
-				ent_ports[name].Value = WireLib.DT[tp].Zero
+				ent_ports[name].Value = WireLib.GetDefaultForType(tp)
 				ent_ports[name].Type = tp
 			end
 			ent_ports[name].Keep = true
 			ent_ports[name].Num = n
-			ent_ports[name].Desc = descs[n]
+			ent_ports[name].Desc = desc
 		else
 			local port = {
 				Entity = ent,
 				Name = name,
 				Desc = desc,
 				Type = tp,
-				Value = WireLib.DT[ tp ].Zero,
+				Value = WireLib.GetDefaultForType(tp),
 				Material = "tripmine_laser",
 				Color = Color(255, 255, 255, 255),
 				Width = 1,
@@ -228,7 +333,6 @@ function WireLib.AdjustSpecialInputs(ent, names, types, descs)
 		end
 	end
 
-	WireLib.SetPathNames(ent, names)
 	WireLib._SetInputs(ent)
 
 	return ent_ports
@@ -238,7 +342,28 @@ end
 function WireLib.AdjustSpecialOutputs(ent, names, types, descs)
 	types = types or {}
 	descs = descs or {}
+
 	local ent_ports = ent.Outputs or {}
+
+	local ent_mods = ent.EntityMods
+	if ent_mods then
+		local n = #names
+		if ent_mods.CreateEntityOutput then
+			n = n + 1
+
+			names[n] = "entity"
+			types[n] = "ENTITY"
+		end
+		if ent_mods.CreateWirelinkOutput then
+			n = n + 1
+
+			names[n] = "wirelink"
+			types[n] = "WIRELINK"
+		end
+	end
+
+
+	local i = 0
 	for n,v in ipairs(names) do
 		local name, desc, tp = ParsePortName(v, types[n] or "NORMAL", descs and descs[n])
 
@@ -247,19 +372,20 @@ function WireLib.AdjustSpecialOutputs(ent, names, types, descs)
 				WireLib.DisconnectOutput(ent, name)
 				ent_ports[name].Type = tp
 			end
+			WireLib.RemoveOutPort(ent, name)
 			ent_ports[name].Keep = true
-			ent_ports[name].Num = n
-			ent_ports[name].Desc = descs[n]
+			ent_ports[name].Desc = desc
 		else
+			i = i + 1
 			local port = {
 				Keep = true,
 				Name = name,
-				Desc = descs[n],
-				Type = types[n] or "NORMAL",
-				Value = WireLib.DT[ (types[n] or "NORMAL") ].Zero,
+				Desc = desc,
+				Type = tp,
+				Value = WireLib.GetDefaultForType(tp),
 				Connected = {},
 				TriggerLimit = 8,
-				Num = n,
+				Num = i,
 			}
 
 			local idx = 1
@@ -278,6 +404,7 @@ function WireLib.AdjustSpecialOutputs(ent, names, types, descs)
 			port.Keep = nil
 		else
 			WireLib.DisconnectOutput(ent, portname)
+			WireLib.RemoveOutPort(ent, portname)
 			ent_ports[portname] = nil
 		end
 	end
@@ -308,7 +435,7 @@ function WireLib.RetypeInputs(ent, iname, itype, descs)
 		ent_ports[iname].Type = itype
 	end
 	ent_ports[iname].Desc = descs
-	ent_ports[iname].Value = WireLib.DT[itype].Zero
+	ent_ports[iname].Value = WireLib.GetDefaultForType(itype)
 
 	WireLib._SetInputs(ent)
 end
@@ -324,7 +451,7 @@ function WireLib.RetypeOutputs(ent, oname, otype, descs)
 		ent_ports[oname].Type = otype
 	end
 	ent_ports[oname].Desc = descs
-	ent_ports[oname].Value = WireLib.DT[otype].Zero
+	ent_ports[oname].Value = WireLib.GetDefaultForType(otype)
 
 	WireLib._SetOutputs(ent)
 end
@@ -354,7 +481,7 @@ function WireLib.Restored(ent, force_outputs)
 			port.Color = port.Color or Color(255, 255, 255, 255)
 			port.Width = port.Width or 2
 			port.StartPos = port.StartPos or Vector(0, 0, 0)
-			if (port.Src) and (not port.Path) then
+			if port.Src and (not port.Path) then
 				port.Path = { { Entity = port.Src, Pos = Vector(0, 0, 0) } }
 			end
 
@@ -387,7 +514,7 @@ function WireLib.Restored(ent, force_outputs)
 	end
 end
 
-local function ClearPorts(ports, ConnectEnt, DontSendToCL)
+local function ClearPorts(ports, ConnectEnt, DontSendToCL, Removing)
 	local Valid, EmergencyBreak = true, 0
 
 	-- There is a strange bug, not all the links get removed at once.
@@ -402,7 +529,7 @@ local function ClearPorts(ports, ConnectEnt, DontSendToCL)
 				if (ports) then
 					local port = ports[Name]
 					if (port) then
-						WireLib.Link_Clear(Ent, Name, DontSendToCL)
+						WireLib.Link_Clear(Ent, Name, DontSendToCL, Removing)
 						newValid = true
 					end
 				end
@@ -426,7 +553,7 @@ function WireLib.Remove(ent, DontUnList)
 				if (Outports) then
 					local outport = Outports[inport.SrcId]
 					if (outport) then
-						ClearPorts(outport.Connected, ent, true)
+						ClearPorts(outport.Connected, ent, true, true)
 					end
 				end
 			end
@@ -482,6 +609,7 @@ local function Wire_Link(dst, dstid, src, srcid, path)
 	input.SrcId = srcid
 	input.Path = path
 
+	WireLib.Paths.Add(input)
 	WireLib._SetLink(input)
 
 	table.insert(output.Connected, { Entity = dst, Name = dstid })
@@ -500,21 +628,40 @@ local function Wire_Link(dst, dstid, src, srcid, path)
 end
 
 function WireLib.TriggerOutput(ent, oname, value, iter)
-	if not IsValid(ent) then return end
+	if not entIsValid(ent) then return end
 	if not HasPorts(ent) then return end
-	if (not ent.Outputs) then return end
 
-	local output = ent.Outputs[oname]
-	if (output) and (value ~= output.Value or output.Type == "ARRAY" or output.Type == "TABLE") then
-		if (output.TriggerLimit <= 0) then return end
+	local entTbl = entGetTable(ent)
+	if not entTbl.Outputs then return end
+
+	local output = entTbl.Outputs[oname]
+	if not output then return end
+
+	local ty = WireLib.DT[output.Type]
+	if ty and not ty.Validator(value) then
+		-- Not copying here is fine since data types are immutable outside E2.
+		value = ty.Zero()
+	end
+
+	if value ~= output.Value or output.Type == "ARRAY" or output.Type == "TABLE" or (output.Type == "ENTITY" and not rawequal(value, output.Value) --[[Covers the NULL==NULL case]]) then
+		local timeOfFrame = CurTime()
+		if timeOfFrame ~= output.TriggerTime then
+			-- Reset the TriggerLimit every frame
+			output.TriggerLimit = 8
+			output.TriggerTime = timeOfFrame
+		elseif output.TriggerLimit <= 0 then
+			return
+		end
 		output.TriggerLimit = output.TriggerLimit - 1
 
 		output.Value = value
+		local outputConnected = output.Connected
 
-		if (iter) then
-			for _,dst in ipairs(output.Connected) do
-				if (IsValid(dst.Entity)) then
-					iter:Add(dst.Entity, dst.Name, value)
+		if iter then
+			for _, dst in ipairs(outputConnected) do
+				local dstEnt = dst.Entity
+				if entIsValid(dstEnt) then
+					iter:Add(dstEnt, dst.Name, value)
 				end
 			end
 			return
@@ -522,18 +669,18 @@ function WireLib.TriggerOutput(ent, oname, value, iter)
 
 		iter = WireLib.CreateOutputIterator()
 
-		for _,dst in ipairs(output.Connected) do
-			if (IsValid(dst.Entity)) then
-				WireLib.TriggerInput(dst.Entity, dst.Name, value, iter)
+		for _, dst in ipairs(outputConnected) do
+			local dstEnt = dst.Entity
+			if entIsValid(dstEnt) then
+				WireLib.TriggerInput(dstEnt, dst.Name, value, iter)
 			end
 		end
 
 		iter:Process()
-
 	end
 end
 
-local function Wire_Unlink(ent, iname, DontSendToCL)
+local function Wire_Unlink(ent, iname, DontSendToCL, Removing)
 	if not HasPorts(ent) then return end
 
 	local input = ent.Inputs[iname]
@@ -564,7 +711,8 @@ local function Wire_Unlink(ent, iname, DontSendToCL)
 		input.SrcId = nil
 		input.Path = nil
 
-		WireLib.TriggerInput(ent, iname, WireLib.DT[input.Type].Zero, nil)
+		if (Removing) then return end
+		WireLib.TriggerInput(ent, iname, WireLib.GetDefaultForType(input.Type), nil)
 
 		if (DontSendToCL) then return end
 		WireLib._SetLink(input)
@@ -578,33 +726,23 @@ function WireLib.Link_Start(idx, ent, pos, iname, material, color, width)
 
 	local input = ent.Inputs[iname]
 
+	if not input.Path then input.Path = {} end
+
 	CurLink[idx] = {
 		Dst = ent,
 		DstId = iname,
-		Path = {},
-		OldPath = input.Path,
-		}
-
-	CurLink[idx].OldPath             = CurLink[idx].OldPath or {}
-	CurLink[idx].OldPath[0]          = {}
-	CurLink[idx].OldPath[0].pos      = input.StartPos
-	CurLink[idx].OldPath[0].material = input.Material
-	CurLink[idx].OldPath[0].color    = input.Color
-	CurLink[idx].OldPath[0].width    = input.Width
-
-	local net_name = "wp_" .. iname
-	ent:SetNetworkedBeamInt(net_name, 0)
-	ent:SetNetworkedBeamVector(net_name .. "_start", pos)
-	ent:SetNetworkedBeamString(net_name .. "_mat", material)
-	ent:SetNetworkedBeamVector(net_name .. "_col", Vector(color.r, color.g, color.b))
-	ent:SetNetworkedBeamFloat(net_name .. "_width", width)
-
-	--RDbeamlib.StartWireBeam( ent, iname, pos, material, color, width )
+		Path = input.Path,
+		OldPath = {}
+	}
+	for i=1, #input.Path do
+		CurLink[idx].OldPath[i] = input.Path[i]
+		input.Path[i] = nil
+	end
 
 	input.StartPos = pos
 	input.Material = material
 	input.Color = color
-	input.Width = width
+	input.Width = math_clamp(width, 0, 5)
 
 	return true
 end
@@ -615,15 +753,8 @@ function WireLib.Link_Node(idx, ent, pos)
 	if not IsValid(CurLink[idx].Dst) then return end
 	if not IsValid(ent) then return end -- its the world, give up
 
-	local net_name = "wp_" .. CurLink[idx].DstId
-	local node_idx = CurLink[idx].Dst:GetNetworkedBeamInt(net_name)+1
-	CurLink[idx].Dst:SetNetworkedBeamEntity(net_name .. "_" .. node_idx .. "_ent", ent)
-	CurLink[idx].Dst:SetNetworkedBeamVector(net_name .. "_" .. node_idx .. "_pos", pos)
-	CurLink[idx].Dst:SetNetworkedBeamInt(net_name, node_idx)
-
-	--RDbeamlib.AddWireBeamNode( CurLink[idx].Dst, CurLink[idx].DstId, ent, pos )
-
 	table.insert(CurLink[idx].Path, { Entity = ent, Pos = pos })
+	WireLib.Paths.Add(CurLink[idx].Dst.Inputs[CurLink[idx].DstId])
 end
 
 
@@ -665,16 +796,7 @@ function WireLib.Link_End(idx, ent, pos, oname, pl)
 		return
 	end
 
-	local net_name = "wp_" .. CurLink[idx].DstId
-	local node_idx = CurLink[idx].Dst:GetNetworkedBeamInt(net_name)+1
-	CurLink[idx].Dst:SetNetworkedBeamEntity(net_name .. "_" .. node_idx .. "_ent", ent)
-	CurLink[idx].Dst:SetNetworkedBeamVector(net_name .. "_" .. node_idx .. "_pos", pos)
-	CurLink[idx].Dst:SetNetworkedBeamInt(net_name, node_idx)
-
-	--RDbeamlib.AddWireBeamNode( CurLink[idx].Dst, CurLink[idx].DstId, ent, pos )
-
 	table.insert(CurLink[idx].Path, { Entity = ent, Pos = pos })
-
 	Wire_Link(CurLink[idx].Dst, CurLink[idx].DstId, ent, oname, CurLink[idx].Path)
 
 	if (WireLib.DT[input.Type].BiDir) then
@@ -689,37 +811,18 @@ function WireLib.Link_Cancel(idx)
 	if not CurLink[idx] then return end
 	if not IsValid(CurLink[idx].Dst) then return end
 
-	--local orig = CurLink[idx].OldPath[0]
-	--RDbeamlib.StartWireBeam( CurLink[idx].Dst, CurLink[idx].DstId, orig.pos, orig.material, orig.color, orig.width )
-
-	local path_len = 0
-	if (CurLink[idx].OldPath) then path_len = #CurLink[idx].OldPath end
-
-	local net_name = "wp_" .. CurLink[idx].DstId
-	for i=1,path_len do
-		CurLink[idx].Dst:SetNetworkedBeamEntity(net_name .. "_" .. i, CurLink[idx].OldPath[i].Entity)
-		CurLink[idx].Dst:SetNetworkedBeamVector(net_name .. "_" .. i, CurLink[idx].OldPath[i].Pos)
-		--RDbeamlib.AddWireBeamNode( CurLink[idx].Dst, CurLink[idx].DstId, CurLink[idx].OldPath[i].Entity, CurLink[idx].OldPath[i].Pos )
+	if CurLink[idx].input then
+		CurLink[idx].Path = CurLink[idx].input.Path
+	else
+		WireLib.Paths.Add({Entity = CurLink[idx].Dst, Name = CurLink[idx].DstId, Width = 0})
 	end
-	CurLink[idx].Dst:SetNetworkedBeamInt(net_name, path_len)
-
 	CurLink[idx] = nil
 end
 
 
-function WireLib.Link_Clear(ent, iname, DontSendToCL)
-	local net_name = "wp_" .. iname
-	ent:SetNetworkedBeamInt(net_name, 0)
-	--RDbeamlib.ClearWireBeam( ent, iname )
-
-	Wire_Unlink(ent, iname, DontSendToCL)
-end
-
-function WireLib.SetPathNames(ent, names)
-	for k,v in pairs(names) do
-		ent:SetNetworkedBeamString("wpn_" .. k, v)
-	end
-	ent:SetNetworkedBeamInt("wpn_count", #names)
+function WireLib.Link_Clear(ent, iname, DontSendToCL, Removing)
+	WireLib.Paths.Add({Entity = ent, Name = iname, Width = 0})
+	Wire_Unlink(ent, iname, DontSendToCL, Removing)
 end
 
 function WireLib.WireAll(ply, ient, oent, ipos, opos, material, color, width)
@@ -771,7 +874,7 @@ function WireLib.Weld(ent, traceEntity, tracePhysicsBone, DOR, collision, AllowW
 	if (not ent or not traceEntity or traceEntity:IsNPC() or traceEntity:IsPlayer()) then return end
 	local phys = ent:GetPhysicsObject()
 	if ( traceEntity:IsValid() ) or ( traceEntity:IsWorld() and AllowWorldWeld ) then
-		local const = constraint.Weld( ent, traceEntity, 0, tracePhysicsBone, 0, (not collision), DOR )
+		local const = constraint.Weld( ent, traceEntity, 0, tracePhysicsBone, 0, not collision, DOR )
 		-- Don't disable collision if it's not attached to anything
 		if (not collision) then
 			if phys:IsValid() then phys:EnableCollisions( false ) end
@@ -831,6 +934,7 @@ function WireLib.ApplyDupeInfo( ply, ent, info, GetEntByID )
 	if IsValid(ply) then idx = ply:UniqueID() end -- Map Save loading does not have a ply
 	if (info.Wires) then
 		for k,input in pairs(info.Wires) do
+			k=tostring(k) -- For some reason duplicator will parse strings containing numbers as numbers?
 			local ent2 = GetEntByID(input.Src)
 
 			-- Input alias
@@ -944,86 +1048,9 @@ Wire_Link_Node					= WireLib.Link_Node
 Wire_Link_End					= WireLib.Link_End
 Wire_Link_Cancel				= WireLib.Link_Cancel
 Wire_Link_Clear					= WireLib.Link_Clear
-Wire_SetPathNames				= WireLib.SetPathNames
 Wire_CreateOutputIterator		= WireLib.CreateOutputIterator
 Wire_BuildDupeInfo				= WireLib.BuildDupeInfo
 Wire_ApplyDupeInfo				= WireLib.ApplyDupeInfo
-
---backwards logic: set enable to false to show show values on gates instead
-Wire_EnableGateInputValues = true
-local function WireEnableInputValues(pl, cmd, args)
-	if ( args[1] ) and ( ( pl:IsAdmin() ) or ( pl:IsSuperAdmin( )() ) ) then
-		if args[1] == "1" or args[1] == 1 then
-			Wire_EnableGateInputValues = true
-		elseif args[1] == "0" or args[1] == 0 then
-			Wire_EnableGateInputValues = false
-		else
-			pl:PrintMessage(HUD_PRINTCONSOLE, "Only takes 0 or 1")
-		end
-	end
-	pl:PrintMessage(HUD_PRINTCONSOLE, "\nWire_EnableGateInputValues = "..tostring(Wire_EnableGateInputValues).."\n")
-end
-concommand.Add( "Wire_EnableGateInputValues", WireEnableInputValues )
-
-Wire_FastOverlayTextUpdate = false
-local function WireFastOverlayTextUpdate(pl, cmd, args)
-	if ( args[1] ) and ( ( pl:IsAdmin() ) or ( pl:IsSuperAdmin( )() ) ) then
-		if args[1] == "1" or args[1] == 1 then
-			Wire_FastOverlayTextUpdate = true
-		elseif args[1] == "0" or args[1] == 0 then
-			Wire_FastOverlayTextUpdate = false
-		else
-			pl:PrintMessage(HUD_PRINTCONSOLE, "Only takes 0 or 1")
-		end
-	end
-	pl:PrintMessage(HUD_PRINTCONSOLE, "\nWire_FastOverlayTextUpdate = "..tostring(Wire_FastOverlayTextUpdate).."\n")
-end
-concommand.Add( "Wire_FastOverlayTextUpdate", WireFastOverlayTextUpdate )
-
-Wire_SlowerOverlayTextUpdate = false
-local function WireSlowerOverlayTextUpdate(pl, cmd, args)
-	if ( args[1] ) and ( ( pl:IsAdmin() ) or ( pl:IsSuperAdmin( )() ) ) then
-		if args[1] == "1" or args[1] == 1 then
-			Wire_SlowerOverlayTextUpdate = true
-		elseif args[1] == "0" or args[1] == 0 then
-			Wire_SlowerOverlayTextUpdate = false
-		else
-			pl:PrintMessage(HUD_PRINTCONSOLE, "Only takes 0 or 1")
-		end
-	end
-	pl:PrintMessage(HUD_PRINTCONSOLE, "\nWire_SlowerOverlayTextUpdate = "..tostring(Wire_SlowerOverlayTextUpdate).."\n")
-end
-concommand.Add( "Wire_SlowerOverlayTextUpdate", WireSlowerOverlayTextUpdate )
-
-Wire_DisableOverlayTextUpdate = false
-local function WireDisableOverlayTextUpdate(pl, cmd, args)
-	if ( args[1] ) and ( ( pl:IsAdmin() ) or ( pl:IsSuperAdmin( )() ) ) then
-		if args[1] == "1" or args[1] == 1 then
-			Wire_DisableOverlayTextUpdate = true
-		elseif args[1] == "0" or args[1] == 0 then
-			Wire_DisableOverlayTextUpdate = false
-		else
-			pl:PrintMessage(HUD_PRINTCONSOLE, "Only takes 0 or 1")
-		end
-	end
-	pl:PrintMessage(HUD_PRINTCONSOLE, "\nWire_DisableOverlayTextUpdate = "..tostring(Wire_DisableOverlayTextUpdate).."\n")
-end
-concommand.Add( "Wire_DisableOverlayTextUpdate", WireDisableOverlayTextUpdate )
-
-Wire_ForceDelayOverlayTextUpdate = false
-local function WireForceDelayOverlayTextUpdate(pl, cmd, args)
-	if ( args[1] ) and ( ( pl:IsAdmin() ) or ( pl:IsSuperAdmin( )() ) ) then
-		if args[1] == "1" or args[1] == 1 then
-			Wire_ForceDelayOverlayTextUpdate = true
-		elseif args[1] == "0" or args[1] == 0 then
-			Wire_ForceDelayOverlayTextUpdate = false
-		else
-			pl:PrintMessage(HUD_PRINTCONSOLE, "Only takes 0 or 1")
-		end
-	end
-	pl:PrintMessage(HUD_PRINTCONSOLE, "\nWire_ForceDelayOverlayTextUpdate = "..tostring(Wire_ForceDelayOverlayTextUpdate).."\n")
-end
-concommand.Add( "Wire_ForceDelayOverlayTextUpdate", WireForceDelayOverlayTextUpdate )
 
 -- prevent applyForce+Anti-noclip-based killing contraptions
 hook.Add("InitPostEntity", "antiantinoclip", function()
@@ -1065,78 +1092,33 @@ hook.Add("InitPostEntity", "antiantinoclip", function()
 	ENT.oldpos = Vector(0,0,0)
 end)
 
--- Calls "func", once (Advanced) Duplicator has finished spawning the entity that was copied with the entity id "entid".
--- Must be called from an duplicator.RegisterEntityClass or duplicator.RegisterEntityModifier handler.
--- Usage: WireLib.PostDupe(entid, function(ent) ... end)
-function WireLib.PostDupe(entid, func)
-	local CreatedEntities
-
-	local paste_functions = {
-		[duplicator.Paste] = true,
-		[AdvDupe.Paste] = true,
-		[AdvDupe.OverTimePasteProcess] = true,
-	}
-
-	-- Go through the call stack to find someone who has a CreatedEntities table for us.
-	local i,info = 1,debug.getinfo(1)
-	while info do
-		if paste_functions[info.func] then
-			for j = 1,20 do
-				local name, value = debug.getlocal(i, j)
-				if name == "CreatedEntities" then
-					CreatedEntities = value
-					break
-				end
-			end
-			break
-		end
-		i = i+1
-		info = debug.getinfo(i)
-	end
-
-	-- Nothing found? Too bad...
-	if not CreatedEntities then return end
-
-	-- Wait until the selected entity has been spawned...
-	local unique = "WireLib_PostDupe_"..tostring({})
-	timer.Create(unique, 1, 240, function()
-		local ent = CreatedEntities[entid]
-		if ent then
-			timer.Remove(unique)
-
-			-- and call the callback
-			func(ent)
-		end
-	end)
-end
-
 function WireLib.GetOwner(ent)
 	return E2Lib.getOwner({}, ent)
 end
 
-function WireLib.dummytrace(ent)
-	local pos = ent:GetPos()
-	return {
-		FractionLeftSolid = 0,
-		HitNonWorld       = true,
-		Fraction          = 0,
-		Entity            = ent,
-		HitPos            = pos,
-		HitNormal         = Vector(0,0,0),
-		HitBox            = 0,
-		Normal            = Vector(1,0,0),
-		Hit               = true,
-		HitGroup          = 0,
-		MatType           = 0,
-		StartPos          = pos,
-		PhysicsBone       = 0,
-		WorldToLocal      = Vector(0,0,0),
-	}
+function WireLib.NumModelSkins(model)
+	if NumModelSkins then
+		return NumModelSkins(model)
+	end
+	local info = util.GetModelInfo(model)
+	return info and info.SkinCount
+end
+
+--- @return whether the given player can spawn an object with the given model and skin
+function WireLib.CanModel(player, model, skin)
+	if not util.IsValidModel(model) then return false end
+	if skin ~= nil then
+		local count = WireLib.NumModelSkins(model)
+		if skin < 0 or (count and skin >= count) then return false end
+	end
+	if IsValid(player) and player:IsPlayer() and not hook.Run("PlayerSpawnObject", player, model, skin) then return false end
+	return true
 end
 
 function WireLib.MakeWireEnt( pl, Data, ... )
 	Data.Class = scripted_ents.Get(Data.Class).ClassName
 	if IsValid(pl) and not pl:CheckLimit(Data.Class:sub(6).."s") then return false end
+	if Data.Model and not WireLib.CanModel(pl, Data.Model, Data.Skin) then return false end
 
 	local ent = ents.Create( Data.Class )
 	if not IsValid(ent) then return false end
@@ -1216,9 +1198,15 @@ function WireLib.AddOutputAlias( class, old, new )
 	ENT_table.OutputAliases[old] = new
 end
 
+local function effectiveMass(ent)
+	if not isentity(ent) then return 1 end
+	if ent:IsWorld() then return 99999 end
+	if not IsValid(ent) or not IsValid(ent:GetPhysicsObject()) then return 1 end
+	return ent:GetPhysicsObject():GetMass()
+end
+
 function WireLib.CalcElasticConsts(Ent1, Ent2)
-	if not IsValid(Ent1:GetPhysicsObject()) or not IsValid(Ent2:GetPhysicsObject()) then return 100, 20 end
-	local minMass = math.min(Ent1:IsWorld() and 99999 or Ent1:GetPhysicsObject():GetMass(), Ent2:IsWorld() and 99999 or Ent2:GetPhysicsObject():GetMass())
+	local minMass = math.min(effectiveMass(Ent1), effectiveMass(Ent2))
 	local const = minMass * 100
 	local damp = minMass * 20
 
@@ -1226,25 +1214,19 @@ function WireLib.CalcElasticConsts(Ent1, Ent2)
 end
 
 
--- Returns a string like "Git f3a4ac3" or "SVN 2703" or "Workshop" or "Extracted"
--- The partial git hash can be plugged into https://github.com/wiremod/wire/commit/f3a4ac3 to show the actual commit
-local cachedversion
+local version
+local version_string
+--- Returns the current Wiremod version
+---@return number version The version as a number formatted YYMMDD
+---@return string version_string A verbose version for printing
 function WireLib.GetVersion()
 	-- If we've already found our version just return that again
-	if cachedversion then return cachedversion end
+	if version then return version, version_string end
 
-	-- Check if we're Workshop version first
-	for k, addon in pairs(engine.GetAddons()) do
-		if addon.wsid == "160250458" then
-			cachedversion = "Workshop"
-			return cachedversion
-		end
-	end
-
-	-- Find what our legacy folder is called
 	local wirefolder = "addons/wire"
+	-- Brute force find the wire folder if it's not named wire
 	if not file.Exists(wirefolder, "GAME") then
-		for k, folder in pairs(({file.Find("addons/*", "GAME")})[2]) do
+		for _, folder in pairs(({file.Find("addons/*", "GAME")})[2]) do
 			if folder:find("wire") and not folder:find("extra") then
 				wirefolder = "addons/"..folder
 				break
@@ -1253,31 +1235,409 @@ function WireLib.GetVersion()
 	end
 
 	if file.Exists(wirefolder, "GAME") then
-		if file.Exists(wirefolder.."/.git", "GAME") then
-			cachedversion = "Git "..(file.Read(wirefolder.."/.git/refs/heads/master", "GAME") or "Unknown"):sub(1,7)
-		elseif file.Exists(wirefolder.."/.svn", "GAME") then
-			-- Note: This method will likely only detect TortoiseSVN installs
-			local wcdb = file.Read(wirefolder.."/.svn/wc.db", "GAME") or ""
-			local start = wcdb:find("/wiremod/wire/!svn/ver/%d+/branches%)")
-			if start then
-				cachedversion = "SVN "..wcdb:sub(start+23, start+26)
-			else
-				cachedversion = "SVN Unknown"
+		wirefolder = wirefolder .. "/.git"
+		if file.Exists(wirefolder, "GAME") then
+			-- Find where git HEAD is
+			local head = file.Open(wirefolder .. "/HEAD", "r", "GAME")
+			if head then
+				local ref
+				while not head:EndOfFile() do
+					local line = head:ReadLine()
+					if line:StartsWith("ref: ") then
+						ref = line:sub(6, -2)
+					end
+				end
+				head:Close()
+				if ref then
+					-- Generate version string
+					local path = wirefolder .. "/" .. ref
+					local name = ref:StartsWith("refs/heads/") and ref:sub(12) or ref
+					local time = -1
+					local time_str = "Unknown"
+					local hash = ""
+					if file.Exists(path, "GAME") then
+						local t = file.Time(path, "GAME")
+						time =  tonumber(os.date("%y%m%d", t))
+						time_str = os.date("%Y.%m.%d", t)
+						hash = file.Read(path, "GAME"):sub(1, 7)
+					end
+
+					version_string = string.format("Local %s (%s:%s)", time_str, name, hash)
+					version = time
+				end
 			end
-		else
-			cachedversion = "Extracted"
 		end
 	end
 
-	if not cachedversion then cachedversion = "Unknown" end
+	if not version then
+		version = -1
+		version_string = "Unknown"
+	end
 
-	return cachedversion
+	return version, version_string
 end
-concommand.Add("wireversion", function(ply,cmd,args)
-	local text = "Wiremod's version: '"..WireLib.GetVersion().."'"
+concommand.Add("wireversion", function(ply)
+	local text = "Wiremod version: " .. select(2, WireLib.GetVersion())
 	if IsValid(ply) then
 		ply:ChatPrint(text)
 	else
 		print(text)
 	end
 end, nil, "Prints the server's Wiremod version")
+
+function WireLib.CheckRegex(data, pattern)
+	local limits = {[0] = 50000000, 15000, 500, 150, 70, 40} -- Worst case is about 200ms
+	local stripped, nrepl, nrepl2
+	-- strip escaped things
+	stripped, nrepl = string.gsub(pattern, "%%.", "")
+	-- strip bracketed things
+	stripped, nrepl2 = string.gsub(stripped, "%[.-%]", "")
+	-- strip captures
+	stripped = string.gsub(stripped, "[()]", "")
+	-- Find extenders
+	local n = 0 for i in string.gmatch(stripped, "[%+%-%*]") do n = n + 1 end
+	local msg
+	if n<=#limits then
+		if #data*(#stripped + nrepl - n + nrepl2)>limits[n] then msg = n.." ext search length too long ("..limits[n].." max)" else return end
+	else
+		msg = "too many extenders"
+	end
+	error("Regex is too complex! " .. msg)
+end
+
+local material_blacklist = {
+	["pp/copy"] = true,
+	["engine/writez"] = true,
+	["debug/debugluxels"] = true, -- Crashes linux client
+	["effects/ar2_altfire1"] = true
+}
+function WireLib.IsValidMaterial(material)
+	material = string.sub(material, 1, 260)
+	local path = string.StripExtension(string.GetNormalizedFilepath(string.lower(material)))
+	if material_blacklist[path] then return "" end
+	return material
+end
+
+local ENTITY = FindMetaTable("Entity")
+
+if CPPI and ENTITY.CPPICanTool then
+	--- Returns if given player can tool the given entity.
+	---@param player Player
+	---@param entity Entity
+	---@param toolname string
+	function WireLib.CanTool(player, entity, toolname) ---@return boolean
+		return entity:CPPICanTool(player, toolname)
+	end
+else
+	local zero = Vector(0, 0, 0)
+	local norm = Vector(1, 0, 0)
+
+	local tr = { ---@type TraceResult
+		Hit = true, HitNonWorld = true, HitNoDraw = false, HitSky = false, AllSolid = true,
+		HitNormal = zero, Normal = norm,
+
+		Fraction = 1, FractionLeftSolid = 0,
+		HitBox = 0, HitGroup = 0, HitTexture = "**studio**",
+		MatType = 0, PhysicsBone = 0, SurfaceProps = 0, DispFlags = 0, Contents = 0,
+
+		Entity = NULL, HitPos = zero, StartPos = zero,
+	}
+
+	--- Returns if given player can tool the given entity.
+	---@param player Player
+	---@param entity Entity
+	---@param toolname string
+	function WireLib.CanTool(player, entity, toolname) ---@return boolean
+		local pos = entity:GetPos()
+		tr.Entity, tr.HitPos, tr.StartPos = entity, pos, pos
+		return hook.Run("CanTool", player, tr, toolname) ~= false
+	end
+end
+
+if CPPI and ENTITY.CPPICanPhysgun then
+	--- Returns if given player can physgun the given entity.
+	---@param player Player
+	---@param target Entity
+	function WireLib.CanPhysgun(player, target) ---@return boolean
+		return target:CPPICanPhysgun(player)
+	end
+else
+	--- Returns if given player can physgun the given entity.
+	---@param player Player
+	---@param target Entity
+	function WireLib.CanPhysgun(player, target) ---@return boolean
+		return hook.Run("PhysgunPickup", player, target) ~= false
+	end
+end
+
+if CPPI and ENTITY.CPPICanPickup then
+	--- Returns if given player can pickup the given entity.
+	---@param player Player
+	---@param target Entity
+	function WireLib.CanPickup(player, target) ---@return boolean
+		return target:CPPICanPickup(player)
+	end
+else
+	--- Returns if given player can pickup the given entity.
+	---@param player Player
+	---@param target Entity
+	function WireLib.CanPickup(player, target) ---@return boolean
+		return hook.Run("GravGunPickupAllowed", player, target) ~= false
+	end
+end
+
+if CPPI and ENTITY.CPPICanPunt then
+	--- Returns if given player can punt the given entity.
+	---@param player Player
+	---@param target Entity
+	function WireLib.CanPunt(player, target) ---@return boolean
+		return target:CPPICanPunt(player)
+	end
+else
+	--- Returns if given player can punt the given entity.
+	---@param player Player
+	---@param target Entity
+	function WireLib.CanPunt(player, target) ---@return boolean
+		return hook.Run("GravGunPunt", player, target) ~= false
+	end
+end
+
+if CPPI and ENTITY.CPPICanUse then
+	--- Returns if given player can use the given entity.
+	---@param player Player
+	---@param target Entity
+	function WireLib.CanUse(player, target) ---@return boolean
+		return target:CPPICanUse(player)
+	end
+else
+	--- Returns if given player can use the given entity.
+	---@param player Player
+	---@param target Entity
+	function WireLib.CanUse(player, target) ---@return boolean
+		return hook.Run("PlayerUse", player, target) ~= false
+	end
+end
+
+if CPPI and ENTITY.CPPICanDamage then
+	--- Returns if given player can damage the given entity.
+	---@param player Player
+	---@param target Entity
+	function WireLib.CanDamage(player, target) ---@return boolean
+		return target:CPPICanDamage(player)
+	end
+else
+	--- Returns if given player can damage the given entity.
+	--- Uses PlayerShouldTakeDamage for players, CanTool for entities.
+	---@param player Player
+	---@param target Entity
+	function WireLib.CanDamage(player, target) ---@return boolean
+		if target:IsPlayer() then
+			return hook.Run("PlayerShouldTakeDamage", target, player) ~= false
+		else
+			return WireLib.CanTool(player, target, "")
+		end
+	end
+end
+
+if CPPI and ENTITY.CPPIDrive then -- why is this not CPPICanDrive?
+	--- Returns if given player can prop drive the given entity.
+	---@param player Player
+	---@param target Entity
+	function WireLib.CanDrive(player, target) ---@return boolean
+		return target:CPPIDrive(player)
+	end
+else
+	--- Returns if given player can prop drive the given entity.
+	---@param player Player
+	---@param target Entity
+	function WireLib.CanDrive(player, target) ---@return boolean
+		return hook.Run("CanDrive", player, target) ~= false
+	end
+end
+
+if CPPI and ENTITY.CPPICanProperty then
+	--- Returns if the player can apply the given property to the target.
+	---@param player Player
+	---@param target Entity
+	---@param property string
+	function WireLib.CanProperty(player, target, property) ---@return boolean
+		return target:CPPICanProperty(player, property)
+	end
+else
+	--- Returns if the player can apply the given property to the target.
+	---@param player Player
+	---@param target Entity
+	---@param property string
+	function WireLib.CanProperty(player, target, property) ---@return boolean
+		return hook.Run("CanProperty", player, property, target) ~= false
+	end
+end
+
+if CPPI and ENTITY.CPPICanEditVariable then
+	--- Returns if the player can modify the target's editable values.
+	---@param self Entity
+	---@param ply Player
+	---@param key string
+	---@param val string
+	---@param editor table
+	WireLib.CanEditVariable = ENTITY.CPPICanEditVariable ---@return boolean
+else
+	--- Returns if the player can modify the target's editable values.
+	---@param self Entity
+	---@param ply Player
+	---@param key string
+	---@param val string
+	---@param editor table
+	function WireLib.CanEditVariable(self, ply, key, val, editor) ---@return boolean
+		return hook.Run("CanEditVariable", self, ply, key, val, editor) ~= false
+	end
+end
+
+function WireLib.SetColor(ent, color)
+	color.r = math_clamp(color.r, 0, 255)
+	color.g = math_clamp(color.g, 0, 255)
+	color.b = math_clamp(color.b, 0, 255)
+	color.a = ent:IsPlayer() and ent:GetColor().a or math_clamp(color.a, 0, 255)
+
+	local rendermode = ent:GetRenderMode()
+	if rendermode == RENDERMODE_NORMAL or rendermode == RENDERMODE_TRANSALPHA then
+		rendermode = color.a == 255 and RENDERMODE_NORMAL or RENDERMODE_TRANSALPHA
+		ent:SetRenderMode(rendermode)
+	else
+		rendermode = nil -- Don't modify the current stored modifier
+	end
+
+	ent:SetColor(color)
+	duplicator.StoreEntityModifier(ent, "colour", { Color = color, RenderMode = rendermode })
+end
+
+if not WireLib.PatchedDuplicator then
+	WireLib.PatchedDuplicator = true
+
+	local localPos
+
+	local oldSetLocalPos = duplicator.SetLocalPos
+	function duplicator.SetLocalPos(pos, ...)
+		localPos = pos
+		return oldSetLocalPos(pos, ...)
+	end
+
+	local oldPaste = duplicator.Paste
+	function duplicator.Paste(player, entityList, constraintList, ...)
+		local result = { oldPaste(player, entityList, constraintList, ...) }
+		local createdEntities, createdConstraints = result[1], result[2]
+		local data = {
+			EntityList = entityList, ConstraintList = constraintList,
+			CreatedEntities = createdEntities, CreatedConstraints = createdConstraints,
+			Player = player, HitPos = localPos,
+		}
+		hook.Run("AdvDupe_FinishPasting", {data}, 1)
+		return unpack(result)
+	end
+end
+
+local uniqueSoundsTbl = setmetatable({}, {__index=function(t,k) local r={[1]=0} t[k]=r return r end})
+local maxUniqueSounds = CreateConVar("wire_sounds_unique_max", "200", FCVAR_ARCHIVE, "The maximum number of sound paths a player is allowed to cache")
+
+function WireLib.SoundExists(path, ply)
+	-- Limit length and remove invalid chars
+	path = string.GetNormalizedFilepath(string.gsub(string.sub(path, 1, 260), "[\"?']", ""))
+
+	-- Extract sound flags. See https://developer.valvesoftware.com/wiki/Soundscripts#Sound_characters
+	local flags, checkpath = string.match(path, "^([^%w_/%.]*)(.*)")
+	if #flags > 2 or string.match(flags, "[^#@<>%^%)}]") then
+		path = checkpath
+	end
+
+	if ply then
+		-- A player can only use a certain number of unique sound paths
+		local playerSounds = uniqueSoundsTbl[ply:SteamID()]
+		if not playerSounds[checkpath] then
+			if playerSounds[1] >= maxUniqueSounds:GetInt() then return end
+			playerSounds[checkpath] = true
+			playerSounds[1] = playerSounds[1] + 1
+		end
+	elseif not (istable(sound.GetProperties(checkpath)) or file.Exists("sound/" .. checkpath, "GAME")) then
+		return
+	end
+
+	return path
+end
+
+-- Notify --
+
+local triv_start = WireLib.Net.Trivial.Start
+
+--- Sends a colored message to the player's chat.
+--- When used serverside, setting the player as nil will only inform the server.
+--- When used clientside, the first argument is ignored and only the local player is informed.
+---@param ply Player | Player[]?
+---@param msg string
+---@param severity WireLib.NotifySeverity?
+---@param chatprint boolean?
+---@param color Color?
+local function notify(ply, msg, severity, chatprint, color)
+	if not severity then severity = 1 end
+	if chatprint == nil then chatprint = severity < 2 end
+
+	if not ply or severity > 2 then
+		if game.SinglePlayer() then
+			ply = Entity(1)
+		else
+			local arg = WireLib.NotifyBuilder(msg, severity, color)
+			if isentity(ply) then
+				table.insert(arg, 2, ": ")
+				table.insert(arg, 2, ply)
+			end
+			MsgC(unpack(arg))
+		end
+	end
+	if ply then
+		triv_start("notify")
+			net.WriteUInt(severity, 4)
+			net.WriteBool(color ~= nil)
+			if color ~= nil then net.WriteColor(color, false) end
+			local data = util.Compress(string.sub(msg, 1, 2048))
+			local datal = #data
+			net.WriteUInt(datal, 11)
+			net.WriteData(data, datal)
+			net.WriteBool(chatprint)
+		net.Send(ply)
+	end
+end
+WireLib.Notify = notify
+
+--- Sends a colored message to all players in a usergroup.
+---@param group string | string[]
+---@param msg string
+---@param severity WireLib.NotifySeverity? A value from WireLib.NotifySeverity
+---@param chatprint boolean?
+---@param color Color?
+function WireLib.NotifyGroup(group, msg, severity, chatprint, color)
+	local plys = {}
+
+	if isstring(group) then
+		for _, p in ipairs(player.GetAll()) do
+			if p:GetUserGroup() == group then
+				plys[#plys + 1] = p
+			end
+		end
+	else
+		for _, p in ipairs(player.GetAll()) do
+			if table.HasValue(group, p:GetUserGroup()) then
+				plys[#plys + 1] = p
+			end
+		end
+	end
+
+	notify(plys, msg, severity, chatprint, color)
+end
+
+--- Sends a colored message to all players' chats. Equivalent to the first argument of WireLib.Notify being nil
+---@param msg string
+---@param severity WireLib.NotifySeverity? A value from WireLib.NotifySeverity
+---@param chatprint boolean?
+---@param color Color?
+function WireLib.NotifyAll(msg, severity, chatprint, color)
+	notify(player.GetAll(), msg, severity, chatprint, color)
+end

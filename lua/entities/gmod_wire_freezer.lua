@@ -18,42 +18,50 @@ function ENT:Initialize()
 end
 
 function ENT:TriggerInput(name, value)
+	local ply = self:GetPlayer()
+	if not ply:IsValid() then return end
 	if name == "Activate" then
 		self.State = value ~= 0
 		for _, ent in pairs(self.Marks) do
-			if IsValid(ent) and IsValid(ent:GetPhysicsObject()) then
-				if self.State then
-					-- Garry's Mod provides an OnPhysgunFreeze hook, which will
-					-- unfreeze the object if prop protection allows it...
-					gamemode.Call("OnPhysgunFreeze", self, ent:GetPhysicsObject(), ent, self:GetPlayer())
-				else
-					-- ...and a CanPlayerUnfreeze hook, which will return whether
-					-- prop protection allows it, but won't unfreeze do the unfreezing.
-					if not gamemode.Call("CanPlayerUnfreeze", self:GetPlayer(), ent, ent:GetPhysicsObject()) then return end
-					ent:GetPhysicsObject():EnableMotion(true)
-					ent:GetPhysicsObject():Wake()
+			if ent:IsValid() then
+				local phys = ent:GetPhysicsObject()
+				if phys:IsValid() then
+					if self.State then
+						-- Garry's Mod provides an OnPhysgunFreeze hook, which will
+						-- unfreeze the object if prop protection allows it...
+						gamemode.Call("OnPhysgunFreeze", self, phys, ent, ply)
+					else
+						-- ...and a CanPlayerUnfreeze hook, which will return whether
+						-- prop protection allows it, but won't unfreeze do the unfreezing.
+						if not gamemode.Call("CanPlayerUnfreeze", ply, ent, phys) then return end
+						phys:EnableMotion(true)
+						phys:Wake()
+					end
 				end
 			end
 		end
 	elseif name == "Disable Collisions" then
 		self.CollisionState = math.Clamp(math.Round(value), 0, 4)
 		for _, ent in pairs(self.Marks) do
-			if IsValid(ent) and IsValid(ent:GetPhysicsObject()) and gamemode.Call("CanTool", self:GetPlayer(), WireLib.dummytrace(ent), "nocollide") then
-				if self.CollisionState == 0 then
-					ent:SetCollisionGroup( COLLISION_GROUP_NONE )
-					ent:GetPhysicsObject():EnableCollisions(true)
-				elseif self.CollisionState == 1 then
-					ent:SetCollisionGroup( COLLISION_GROUP_WORLD )
-					ent:GetPhysicsObject():EnableCollisions(true)
-				elseif self.CollisionState == 2 then
-					ent:SetCollisionGroup( COLLISION_GROUP_NONE )
-					ent:GetPhysicsObject():EnableCollisions(false)
-				elseif self.CollisionState == 3 then
-					ent:SetCollisionGroup( COLLISION_GROUP_WEAPON )
-					ent:GetPhysicsObject():EnableCollisions(true)
-				elseif self.CollisionState == 4 then
-					ent:SetCollisionGroup( COLLISION_GROUP_WEAPON )
-					ent:GetPhysicsObject():EnableCollisions(false)
+			if ent:IsValid() then
+				local phys = ent:GetPhysicsObject()
+				if phys:IsValid() and WireLib.CanTool(ply, ent, "nocollide") then
+					if self.CollisionState == 0 then
+						ent:SetCollisionGroup( COLLISION_GROUP_NONE )
+						phys:EnableCollisions(true)
+					elseif self.CollisionState == 1 then
+						ent:SetCollisionGroup( COLLISION_GROUP_WORLD )
+						phys:EnableCollisions(true)
+					elseif self.CollisionState == 2 then
+						ent:SetCollisionGroup( COLLISION_GROUP_NONE )
+						phys:EnableCollisions(false)
+					elseif self.CollisionState == 3 then
+						ent:SetCollisionGroup( COLLISION_GROUP_WEAPON )
+						phys:EnableCollisions(true)
+					elseif self.CollisionState == 4 then
+						ent:SetCollisionGroup( COLLISION_GROUP_WEAPON )
+						phys:EnableCollisions(false)
+					end
 				end
 			end
 		end
@@ -70,8 +78,8 @@ local collisionDescriptions = {
 }
 
 function ENT:UpdateOverlay()
-	self:SetOverlayText( 
-		(self.State and "Frozen" or "Unfrozen") .. "\n" .. 
+	self:SetOverlayText(
+		(self.State and "Frozen" or "Unfrozen") .. "\n" ..
 		collisionDescriptions[self.CollisionState] .. "\n" ..
 		"Linked Entities: " .. #self.Marks)
 end
@@ -94,7 +102,7 @@ function ENT:LinkEnt( ent )
 	if (self:CheckEnt( ent )) then return false	end
 	self.Marks[#self.Marks+1] = ent
 	ent:CallOnRemove("AdvEMarker.Unlink", function(ent)
-		if IsValid(self) then self:UnlinkEnt(ent) end
+		if self:IsValid() then self:UnlinkEnt(ent) end
 	end)
 	self:UpdateOutputs()
 	return true
@@ -117,7 +125,7 @@ end
 duplicator.RegisterEntityClass( "gmod_wire_freezer", WireLib.MakeWireEnt, "Data" )
 
 function ENT:BuildDupeInfo()
-	local info = self.BaseClass.BuildDupeInfo(self) or {}
+	local info = BaseClass.BuildDupeInfo(self) or {}
 
 	if next(self.Marks) then
 		local tbl = {}
@@ -132,7 +140,7 @@ function ENT:BuildDupeInfo()
 end
 
 function ENT:ApplyDupeInfo(ply, ent, info, GetEntByID)
-	self.BaseClass.ApplyDupeInfo(self, ply, ent, info, GetEntByID)
+	BaseClass.ApplyDupeInfo(self, ply, ent, info, GetEntByID)
 
 	if info.Ent1 then
 		-- Old wire-extras dupe support

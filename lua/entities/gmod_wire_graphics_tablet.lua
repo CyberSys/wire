@@ -86,7 +86,7 @@ function ENT:Initialize()
 	self:PhysicsInit( SOLID_VPHYSICS )
 	self:SetMoveType( MOVETYPE_VPHYSICS )
 	self:SetSolid( SOLID_VPHYSICS )
-	self.Outputs = Wire_CreateOutputs(self, { "X", "Y", "Use", "OnScreen" })
+	self.Outputs = Wire_CreateOutputs(self, { "X", "Y", "Use (Outputs 1 as long as any player is holding the use key while aiming at the screen.)", "OnScreen (Outputs 1 as long as any player is aiming at the screen)" })
 
 	Wire_TriggerOutput(self, "X", 0)
 	Wire_TriggerOutput(self, "Y", 0)
@@ -100,7 +100,7 @@ function ENT:Initialize()
 end
 
 function ENT:Think()
-	self.BaseClass.Think(self)
+	BaseClass.Think(self)
 	local onScreen = 0
 	local clickActive = 0
 
@@ -109,7 +109,7 @@ function ENT:Think()
 	local monitor = WireGPU_Monitors[model]
 	local ang = GPUEntity:LocalToWorldAngles(monitor.rot)
 	local pos = GPUEntity:LocalToWorld(monitor.offset)
-	local h = 512
+	local h = 1024
 	local w = h/monitor.RatioX
 	local x = -w/2
 	local y = -h/2
@@ -169,7 +169,7 @@ function ENT:ShowOutput(cx, cy, activeval, osval)
 end
 
 function ENT:OnRestore()
-	self.BaseClass.OnRestore(self)
+	BaseClass.OnRestore(self)
 	Wire_AdjustOutputs(self, { "X", "Y", "Use", "OnScreen" })
 end
 

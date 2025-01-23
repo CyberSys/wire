@@ -9,28 +9,38 @@ function ENT:Initialize()
 	self:PhysicsInit( SOLID_VPHYSICS )
 	self:SetMoveType( MOVETYPE_VPHYSICS )
 	self:SetSolid( SOLID_VPHYSICS )
-	
-	self.Inputs = Wire_CreateInputs( self, { "Throttle", "Steering", "Handbrake", "Engine", "Lock" } )
+
+	self.Inputs = Wire_CreateInputs( self, { "Throttle", "Steering", "Handbrake", "Engine", "Lock", "Vehicle [ENTITY]" } )
+	self.Outputs = Wire_CreateOutputs( self, { "Vehicle [ENTITY]" } )
 end
 
 function ENT:LinkEnt( pod )
+	pod = WireLib.GetClosestRealVehicle(pod,self:GetPos(),self:GetPlayer())
+
 	if not IsValid(pod) or not pod:IsVehicle() then return false, "Must link to a vehicle" end
+	if not WireLib.CanTool(self:GetPlayer(), pod, "wire_vehicle") then return false, "You do not have permission to access this vehicle" end
+
 	self.Vehicle = pod
 	WireLib.SendMarks(self, {pod})
+	WireLib.TriggerOutput(self, "Vehicle", pod)
 	return true
 end
 function ENT:UnlinkEnt()
 	self.Vehicle = nil
 	WireLib.SendMarks(self, {})
+	WireLib.TriggerOutput(self, "Vehicle", NULL)
 	return true
 end
 
 function ENT:TriggerInput(iname, value)
-	if not IsValid(self.Vehicle) then return end
 	if (iname == "Throttle") then
 		self.Throttle = value
 	elseif (iname == "Steering") then
 		self.Steering = value
+	elseif (iname == "Vehicle") then
+		self:LinkEnt(value)
+	elseif not IsValid(self.Vehicle) then
+		return
 	elseif (iname == "Handbrake") then
 		self.Vehicle:Fire("handbrake"..(value~=0 and "on" or "off"), 1, 0)
 	elseif (iname == "Engine") then
@@ -52,9 +62,9 @@ function ENT:Think()
 end
 
 function ENT:BuildDupeInfo()
-	local info = self.BaseClass.BuildDupeInfo(self) or {}
+	local info = BaseClass.BuildDupeInfo(self) or {}
 
-	if (self.Vehicle) and (self.Vehicle:IsValid()) then
+	if self.Vehicle and self.Vehicle:IsValid() then
 	    info.Vehicle = self.Vehicle:EntIndex()
 	end
 
@@ -62,7 +72,7 @@ function ENT:BuildDupeInfo()
 end
 
 function ENT:ApplyDupeInfo(ply, ent, info, GetEntByID)
-	self.BaseClass.ApplyDupeInfo(self, ply, ent, info, GetEntByID)
+	BaseClass.ApplyDupeInfo(self, ply, ent, info, GetEntByID)
 
 	self.Vehicle = GetEntByID(info.Vehicle)
 end

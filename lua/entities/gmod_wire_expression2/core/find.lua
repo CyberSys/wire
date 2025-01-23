@@ -8,13 +8,16 @@ local function replace_match(a,b)
 	return string.match( string.Replace(a,"-","__"), string.Replace(b,"-","__") )
 end
 
+-- String used to check regex complexities
+local sample_string = string.rep(" ", 40)
+
 -- -- some generic filter criteria -- --
 
 local function filter_all() return true end
 local function filter_none() return false end
 
 local forbidden_classes = {
-	/*
+	--[[
 	["info_apc_missile_hint"] = true,
 	["info_camera_link"] = true,
 	["info_constraint_anchor"] = true,
@@ -42,7 +45,7 @@ local forbidden_classes = {
 	["info_target_gunshipcrash"] = true,
 	["info_teleport_destination"] = true,
 	["info_teleporter_countdown"] = true,
-	*/
+	]]
 	["info_player_allies"] = true,
 	["info_player_axis"] = true,
 	["info_player_combine"] = true,
@@ -67,6 +70,13 @@ local function filter_default(self)
 
 		if ent == chip then return false end
 		return true
+	end
+end
+
+local function filter_default_without_class_blocklist(self)
+	local chip = self.entity
+	return function(ent)
+		return ent ~= chip
 	end
 end
 
@@ -318,7 +328,7 @@ function query_blocked(self, update)
 			self.data.findcount = self.data.findcount - 1
 			return false
 		else
-			return true
+			return self:throw("You cannot send a new find request yet!", true)
 		end
 	end
 	return (self.data.findcount < 1)
@@ -341,16 +351,19 @@ hook.Add("Think","Wire_Expression2_Find_AddCount",addcount)
 __e2setcost(2)
 
 --- Returns the minimum delay between entity find events on a chip
+[nodiscard]
 e2function number findUpdateRate()
 	return findrate()
 end
 
 -- Returns the maximum number of finds per E2
+[nodiscard]
 e2function number findMax()
 	return maxfinds()
 end
 
 -- Returns the remaining available find calls
+[nodiscard]
 e2function number findCount()
 	return self.data.findcount
 end
@@ -437,9 +450,24 @@ local function findPlayer(name)
 end
 
 --- Returns the player with the given name, this is an exception to the rule
+[nodiscard]
 e2function entity findPlayerByName(string name)
 	if query_blocked(self, 1) then return nil end
 	return findPlayer(name)
+end
+
+--- Returns the player with the given SteamID
+[nodiscard]
+e2function entity findPlayerBySteamID(string id)
+	if query_blocked(self, 1) then return NULL end
+	return player.GetBySteamID(id) or NULL
+end
+
+--- Returns the player with the given SteamID64
+[nodiscard]
+e2function entity findPlayerBySteamID64(string id)
+	if query_blocked(self, 1) then return NULL end
+	return player.GetBySteamID64(id) or NULL
 end
 
 --[[************************************************************************]]--
@@ -486,17 +514,19 @@ end
 e2function void findExcludePlayerProps(string name)
 	local ply = findPlayer(name)
 	if not ply then return end
-	e2_findExcludePlayerProps_e(self, { nil, { function() return ply end } })
+	registeredfunctions.e2_findExcludePlayerProps_e(self, { nil, { function() return ply end } })
 end
 
 --- Exclude entities with this model (or partial model name) from future finds
 e2function void findExcludeModel(string model)
+	if not pcall(WireLib.CheckRegex, sample_string, model) then return self:throw("Search string too complex!", nil) end	
 	self.data.find.bl_model[string.lower(model)] = true
 	invalidate_filters(self)
 end
 
 --- Exclude entities with this class (or partial class name) from future finds
 e2function void findExcludeClass(string class)
+	if not pcall(WireLib.CheckRegex, sample_string, class) then return self:throw("Search string too complex!", nil) end
 	self.data.find.bl_class[string.lower(class)] = true
 	invalidate_filters(self)
 end
@@ -544,17 +574,19 @@ end
 e2function void findAllowPlayerProps(string name)
 	local ply = findPlayer(name)
 	if not ply then return end
-	e2_findAllowPlayerProps_e(self, { nil, { function() return ply end } })
+	registeredfunctions.e2_findAllowPlayerProps_e(self, { nil, { function() return ply end } })
 end
 
 --- Remove entities with this model (or partial model name) from the blacklist
 e2function void findAllowModel(string model)
+	if not pcall(WireLib.CheckRegex, sample_string, model) then return self:throw("Search string too complex!", nil) end
 	self.data.find.bl_model[string.lower(model)] = nil
 	invalidate_filters(self)
 end
 
 --- Remove entities with this class (or partial class name) from the blacklist
 e2function void findAllowClass(string class)
+	if not pcall(WireLib.CheckRegex, sample_string, class) then return self:throw("Search string too complex!", nil) end
 	self.data.find.bl_class[string.lower(class)] = nil
 	invalidate_filters(self)
 end
@@ -602,17 +634,19 @@ end
 e2function void findIncludePlayerProps(string name)
 	local ply = findPlayer(name)
 	if not ply then return end
-	e2_findIncludePlayerProps_e(self, { nil, { function() return ply end } })
+	registeredfunctions.e2_findIncludePlayerProps_e(self, { nil, { function() return ply end } })
 end
 
 --- Include entities with this model (or partial model name) in future finds, and remove others not in the whitelist
 e2function void findIncludeModel(string model)
+	if not pcall(WireLib.CheckRegex, sample_string, model) then return self:throw("Search string too complex!", nil) end
 	self.data.find.wl_model[string.lower(model)] = true
 	invalidate_filters(self)
 end
 
 --- Include entities with this class (or partial class name) in future finds, and remove others not in the whitelist
 e2function void findIncludeClass(string class)
+	if not pcall(WireLib.CheckRegex, sample_string, class) then return self:throw("Search string too complex!", nil) end
 	self.data.find.wl_class[string.lower(class)] = true
 	invalidate_filters(self)
 end
@@ -660,17 +694,19 @@ end
 e2function void findDisallowPlayerProps(string name)
 	local ply = findPlayer(name)
 	if not ply then return end
-	e2_findDisallowPlayerProps_e(self, { nil, { function() return ply end } })
+	registeredfunctions.e2_findDisallowPlayerProps_e(self, { nil, { function() return ply end } })
 end
 
 --- Remove entities with this model (or partial model name) from the whitelist
 e2function void findDisallowModel(string model)
+	if not pcall(WireLib.CheckRegex, sample_string, model) then return self:throw("Search string too complex!", nil) end
 	self.data.find.wl_model[string.lower(model)] = nil
 	invalidate_filters(self)
 end
 
 --- Remove entities with this class (or partial class name) from the whitelist
 e2function void findDisallowClass(string class)
+	if not pcall(WireLib.CheckRegex, sample_string, class) then return self:throw("Search string too complex!", nil) end
 	self.data.find.wl_class[string.lower(class)] = nil
 	invalidate_filters(self)
 end
@@ -750,12 +786,25 @@ end
 --[[************************************************************************]]--
 __e2setcost(2)
 
+--- Allows or disallows finding entities on the hardcoded class blocklist, including classes like "prop_dynamic", "physgun_beam" and "gmod_ghost".
+e2function void findAllowBlockedClasses(useHardcodedFilter)
+	if useHardcodedFilter ~= 0 then
+		self.data.find.filter_default = filter_default_without_class_blocklist(self)
+	else
+		self.data.find.filter_default = filter_default(self)
+	end
+end
+
+--[[************************************************************************]]--
+
 --- Returns the indexed entity from the previous find event (valid parameters are 1 to the number of entities found)
+[nodiscard]
 e2function entity findResult(index)
 	return self.data.findlist[index]
 end
 
 --- Returns the closest entity to the given point from the previous find event
+[nodiscard]
 e2function entity findClosest(vector position)
 	local closest = nil
 	local dist = math.huge
@@ -775,6 +824,7 @@ e2function entity findClosest(vector position)
 end
 
 --- Formats the query as an array, R:entity(Index) to get a entity, R:string to get a description including the name and entity id.
+[nodiscard]
 e2function array findToArray()
 	local tmp = {}
 	for k,v in ipairs(self.data.findlist) do
@@ -785,6 +835,7 @@ e2function array findToArray()
 end
 
 --- Equivalent to findResult(1)
+[nodiscard]
 e2function entity find()
 	return self.data.findlist[1]
 end
@@ -795,16 +846,19 @@ __e2setcost(10)
 --- Sorts the entities from the last find event, index 1 is the closest to point V, returns the number of entities in the list
 e2function number findSortByDistance(vector position)
 	position = Vector(position[1], position[2], position[3])
-	local Distance = position.Distance
-	local IsValid = IsValid
 	local findlist = self.data.findlist
 	self.prf = self.prf + #findlist * 12
-	table.sort(findlist, function(a, b)
-		if not IsValid(a) then return false end -- !(invalid < b) <=> (b <= invalid)
-		if not IsValid(b) then return true end -- (valid < invalid)
 
-		return Distance(position, a:GetPos()) < Distance(position, b:GetPos())
-	end)
+	local d = {}
+	for i=1, #findlist do
+		local v = findlist[i]
+		if v:IsValid() then
+			d[v] = (position - v:GetPos()):LengthSqr()
+		else
+			d[v] = math.huge
+		end
+	end
+	table.sort(findlist, function(a, b) return d[a] < d[b] end)
 	return #findlist
 end
 
@@ -814,7 +868,7 @@ __e2setcost(5)
 local function applyClip(self, filter)
 	local findlist = self.data.findlist
 	self.prf = self.prf + #findlist * 5
-	
+
 	filterList(findlist, filter)
 
 	return #findlist
@@ -822,6 +876,7 @@ end
 
 --- Filters the list of entities by removing all entities that are NOT of this class
 e2function number findClipToClass(string class)
+	if not pcall(WireLib.CheckRegex, sample_string, class) then return self:throw("Search string too complex!", 0) end
 	class = string.lower(class)
 	return applyClip(self, function(ent)
 		if !IsValid(ent) then return false end
@@ -831,6 +886,7 @@ end
 
 --- Filters the list of entities by removing all entities that are of this class
 e2function number findClipFromClass(string class)
+	if not pcall(WireLib.CheckRegex, sample_string, class) then return self:throw("Search string too complex!", 0) end
 	return applyClip(self, function(ent)
 		if !IsValid(ent) then return false end
 		return not replace_match(string.lower(ent:GetClass()), class)
@@ -839,6 +895,7 @@ end
 
 --- Filters the list of entities by removing all entities that do NOT have this model
 e2function number findClipToModel(string model)
+	if not pcall(WireLib.CheckRegex, sample_string, model) then return self:throw("Search string too complex!", 0) end
 	return applyClip(self, function(ent)
 		if !IsValid(ent) then return false end
 		return replace_match(string.lower(ent:GetModel() or ""), model)
@@ -847,6 +904,7 @@ end
 
 --- Filters the list of entities by removing all entities that do have this model
 e2function number findClipFromModel(string model)
+	if not pcall(WireLib.CheckRegex, sample_string, model) then return self:throw("Search string too complex!", 0) end
 	return applyClip(self, function(ent)
 		if !IsValid(ent) then return false end
 		return not replace_match(string.lower(ent:GetModel() or ""), model)
@@ -855,6 +913,7 @@ end
 
 --- Filters the list of entities by removing all entities that do NOT have this name
 e2function number findClipToName(string name)
+	if not pcall(WireLib.CheckRegex, sample_string, name) then return self:throw("Search string too complex!", 0) end
 	return applyClip(self, function(ent)
 		if !IsValid(ent) then return false end
 		return replace_match(string.lower(ent:GetName()), name)
@@ -863,6 +922,7 @@ end
 
 --- Filters the list of entities by removing all entities that do have this name
 e2function number findClipFromName(string name)
+	if not pcall(WireLib.CheckRegex, sample_string, name) then return self:throw("Search string too complex!", 0) end
 	return applyClip(self, function(ent)
 		if !IsValid(ent) then return false end
 		return not replace_match(string.lower(ent:GetName()), name)
@@ -956,7 +1016,7 @@ e2function number findClipFromEntity( entity ent )
 	if !IsValid( ent ) then return -1 end
 	return applyClip( self, function( ent2 )
 		if !IsValid(ent2) then return false end
-		return ent != ent2
+		return ent ~= ent2
 	end)
 end
 
@@ -988,5 +1048,23 @@ e2function number findClipToEntities( array entities )
 	return applyClip( self, function( ent )
 		if !IsValid(ent) then return false end
 		return lookup[ent]
+	end)
+end
+
+-- Filters the list of entities by removing all props not owned by this player
+e2function number findClipToPlayerProps( entity ply )
+	if not IsValid(ply) then return -1 end
+	return applyClip( self, function( ent )
+		if not IsValid(ent) then return false end
+		return getOwner(self,ent) == ply
+	end)
+end
+
+-- Filters the list of entities by removing all props owned by this player
+e2function number findClipFromPlayerProps( entity ply )
+	if not IsValid(ply) then return -1 end
+	return applyClip( self, function( ent )
+		if not IsValid(ent) then return false end
+		return getOwner(self,ent) ~= ply
 	end)
 end

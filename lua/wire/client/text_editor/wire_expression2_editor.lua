@@ -16,9 +16,11 @@ end
 
 Editor.FontConVar = CreateClientConVar("wire_expression2_editor_font", defaultFont, true, false)
 Editor.FontSizeConVar = CreateClientConVar("wire_expression2_editor_font_size", 16, true, false)
+Editor.FontAntialiasingConvar = CreateClientConVar("wire_expression2_editor_font_antialiasing", 0, true, false)
 Editor.BlockCommentStyleConVar = CreateClientConVar("wire_expression2_editor_block_comment_style", 1, true, false)
 Editor.NewTabOnOpen = CreateClientConVar("wire_expression2_new_tab_on_open", "1", true, false)
 Editor.ops_sync_subscribe = CreateClientConVar("wire_expression_ops_sync_subscribe",0,true,false)
+Editor.ScrollToWarning = CreateClientConVar("wire_expression2_editor_show_warning_on_validate", 1, true, false)
 
 Editor.Fonts = {}
 -- 				Font					Description
@@ -34,7 +36,7 @@ Editor.Fonts["Lucida Console"] = ""
 Editor.Fonts["Monaco"] = "Mac standard font"
 
 surface.CreateFont("DefaultBold", {
-	font = "defaultbold",
+	font = "Tahoma",
 	size = 12,
 	weight = 700,
 	antialias = true,
@@ -56,24 +58,26 @@ end
 
 function Editor:ChangeFont(FontName, Size)
 	if not FontName or FontName == "" or not Size then return end
+	local antialias = self.FontAntialiasingConvar:GetBool()
+	local antialias_suffix = antialias and "_AA" or ""
 
 	-- If font is not already created, create it.
-	if not self.CreatedFonts[FontName .. "_" .. Size] then
+	if not self.CreatedFonts[FontName .. "_" .. Size .. antialias_suffix] then
 		local fontTable =
 		{
 			font = FontName,
 			size = Size,
 			weight = 400,
-			antialias = false,
+			antialias = antialias,
 			additive = false,
 		}
-		surface.CreateFont("Expression2_" .. FontName .. "_" .. Size, fontTable)
+		surface.CreateFont("Expression2_" .. FontName .. "_" .. Size .. antialias_suffix, fontTable)
 		fontTable.weight = 700
-		surface.CreateFont("Expression2_" .. FontName .. "_" .. Size .. "_Bold", fontTable)
-		self.CreatedFonts[FontName .. "_" .. Size] = true
+		surface.CreateFont("Expression2_" .. FontName .. "_" .. Size .. "_Bold"  .. antialias_suffix, fontTable)
+		self.CreatedFonts[FontName .. "_" .. Size .. antialias_suffix] = true
 	end
 
-	self.CurrentFont = "Expression2_" .. FontName .. "_" .. Size
+	self.CurrentFont = "Expression2_" .. FontName .. "_" .. Size  .. antialias_suffix
 	surface.SetFont(self.CurrentFont)
 	self.FontWidth, self.FontHeight = surface.GetTextSize(" ")
 
@@ -98,10 +102,13 @@ local colors = {
 	["operator"] = Color(224, 224, 224), -- white
 	["comment"] = Color(128, 128, 128), -- grey
 	["ppcommand"] = Color(240, 96, 240), -- purple
+	["ppcommandargs"] = Color(128, 128, 128), -- same as comment
 	["typename"] = Color(240, 160, 96), -- orange
 	["constant"] = Color(240, 160, 240), -- pink
 	["userfunction"] = Color(102, 122, 102), -- dark grayish-green
-	["dblclickhighlight"] = Color(0, 100, 0) -- dark green
+	["eventname"] = Color(74, 194, 116), -- green
+	["dblclickhighlight"] = Color(0, 100, 0), -- dark green
+	["background"] = Color(32, 32, 32) -- dark-grey
 }
 
 local colors_defaults = {}
@@ -175,7 +182,6 @@ function Editor:Init()
 	self.logo = surface.GetTextureID("vgui/e2logo")
 
 	self:InitComponents()
-	self:LoadSyntaxColors()
 
 	-- This turns off the engine drawing
 	self:SetPaintBackgroundEnabled(false)
@@ -209,8 +215,8 @@ function Editor:LoadEditorSettings()
 	end
 
 	if x < 0 or y < 0 or x + w > ScrW() or y + h > ScrH() then -- If the editor is outside the screen, reset it
-		local width, height = math.min(surface.ScreenWidth() - 200, 800), math.min(surface.ScreenHeight() - 200, 620)
-		self:SetPos((surface.ScreenWidth() - width) / 2, (surface.ScreenHeight() - height) / 2)
+		local width, height = math.min(ScrW() - 200, 800), math.min(ScrH() - 200, 620)
+		self:SetPos((ScrW() - width) / 2, (ScrH() - height) / 2)
 		self:SetSize(width, height)
 
 		self:SaveEditorSettings()
@@ -229,8 +235,6 @@ end
 
 
 function Editor:PaintOver()
-	local w, h = self:GetSize()
-
 	surface.SetFont("DefaultBold")
 	surface.SetTextColor(255, 255, 255, 255)
 	surface.SetTextPos(10, 6)
@@ -302,15 +306,15 @@ function Editor:Think()
 			local y = self.p_y + movedY
 			if (x < 10 and x > -10) then x = 0 end
 			if (y < 10 and y > -10) then y = 0 end
-			if (x + self.p_w < surface.ScreenWidth() + 10 and x + self.p_w > surface.ScreenWidth() - 10) then x = surface.ScreenWidth() - self.p_w end
-			if (y + self.p_h < surface.ScreenHeight() + 10 and y + self.p_h > surface.ScreenHeight() - 10) then y = surface.ScreenHeight() - self.p_h end
+			if (x + self.p_w < ScrW() + 10 and x + self.p_w > ScrW() - 10) then x = ScrW() - self.p_w end
+			if (y + self.p_h < ScrH() + 10 and y + self.p_h > ScrH() - 10) then y = ScrH() - self.p_h end
 			self:SetPos(x, y)
 		end
 		if self.p_mode == "sizeBR" then
 			local w = self.p_w + movedX
 			local h = self.p_h + movedY
-			if (self.p_x + w < surface.ScreenWidth() + 10 and self.p_x + w > surface.ScreenWidth() - 10) then w = surface.ScreenWidth() - self.p_x end
-			if (self.p_y + h < surface.ScreenHeight() + 10 and self.p_y + h > surface.ScreenHeight() - 10) then h = surface.ScreenHeight() - self.p_y end
+			if (self.p_x + w < ScrW() + 10 and self.p_x + w > ScrW() - 10) then w = ScrW() - self.p_x end
+			if (self.p_y + h < ScrH() + 10 and self.p_y + h > ScrH() - 10) then h = ScrH() - self.p_y end
 			if (w < 300) then w = 300 end
 			if (h < 200) then h = 200 end
 			self:SetSize(w, h)
@@ -346,12 +350,12 @@ function Editor:Think()
 	if h < 200 then h = 200 end
 	if x < 0 then x = 0 end
 	if y < 0 then y = 0 end
-	if x + w > surface.ScreenWidth() then x = surface.ScreenWidth() - w end
-	if y + h > surface.ScreenHeight() then y = surface.ScreenHeight() - h end
+	if x + w > ScrW() then x = ScrW() - w end
+	if y + h > ScrH() then y = ScrH() - h end
 	if y < 0 then y = 0 end
 	if x < 0 then x = 0 end
-	if w > surface.ScreenWidth() then w = surface.ScreenWidth() end
-	if h > surface.ScreenHeight() then h = surface.ScreenHeight() end
+	if w > ScrW() then w = ScrW() end
+	if h > ScrH() then h = ScrH() end
 
 	self:SetPos(x, y)
 	self:SetSize(w, h)
@@ -368,7 +372,7 @@ function Editor:fullscreen()
 		self.preX, self.preY = self:GetPos()
 		self.preW, self.preH = self:GetSize()
 		self:SetPos(0, 0)
-		self:SetSize(surface.ScreenWidth(), surface.ScreenHeight())
+		self:SetSize(ScrW(), ScrH())
 		self.fs = true
 	end
 end
@@ -415,7 +419,7 @@ local function getPreferredTitles(Line, code)
 		tabtext = str
 	end
 
-	local str = extractNameFromCode(code)
+	str = extractNameFromCode(code)
 	if str and str ~= "" then
 		if not title then
 			title = str
@@ -449,7 +453,10 @@ function Editor:SetActiveTab(val)
 	end
 	if self.E2 then self:Validate() end
 
-	-- Editor subtitle and tab text
+	self:UpdateActiveTabTitle()
+end
+
+function Editor:UpdateActiveTabTitle()
 	local title, tabtext = getPreferredTitles(self:GetChosenFile(), self:GetCode())
 
 	if title then self:SubTitle("Editing: " .. title) else self:SubTitle() end
@@ -501,7 +508,7 @@ function Editor:GetEditorMode() return self.EditorMode end
 local old
 function Editor:FixTabFadeTime()
 	if old ~= nil then return end -- It's already being fixed
-	local old = self.C.TabHolder:GetFadeTime()
+	old = self.C.TabHolder:GetFadeTime()
 	self.C.TabHolder:SetFadeTime(0)
 	timer.Simple(old, function() self.C.TabHolder:SetFadeTime(old) old = nil end)
 end
@@ -539,18 +546,16 @@ function Editor:CreateTab(chosenfile)
 			menu:AddOption("Save", function()
 				self:FixTabFadeTime()
 				local old = self:GetLastTab()
+				local currentTab = self:GetActiveTab()
 				self:SetActiveTab(pnl)
-				self:SaveFile(self:GetChosenFile(), true)
-				self:SetActiveTab(self:GetLastTab())
+				self:SaveFile(self:GetChosenFile(), false)
+				self:SetActiveTab(currentTab)
 				self:SetLastTab(old)
 			end)
 			menu:AddOption("Save As", function()
 				self:FixTabFadeTime()
-				local old = self:GetLastTab()
 				self:SetActiveTab(pnl)
 				self:SaveFile(self:GetChosenFile(), false, true)
-				self:SetActiveTab(self:GetLastTab())
-				self:SetLastTab(old)
 			end)
 			menu:AddOption("Reload", function()
 				self:FixTabFadeTime()
@@ -588,6 +593,7 @@ function Editor:CreateTab(chosenfile)
 		timer.Create("e2autosave", 5, 1, function()
 			self:AutoSave()
 		end)
+		hook.Run("WireEditorText", self, editor)
 	end
 	editor.OnShortcut = function(_, code)
 		if code == KEY_S then
@@ -625,7 +631,7 @@ function Editor:OnTabCreated(sheet) end
 
 function Editor:GetNextAvailableTab()
 	local activetab = self:GetActiveTab()
-	for k, v in pairs(self.C.TabHolder.Items) do
+	for _, v in pairs(self.C.TabHolder.Items) do
 		if v.Tab and v.Tab:IsValid() and v.Tab ~= activetab then
 			return v.Tab
 		end
@@ -775,8 +781,9 @@ function Editor:InitComponents()
 
 	self.C.MainPane = vgui.Create("DPanel", self.C.Divider)
 	self.C.Menu = vgui.Create("DPanel", self.C.MainPane)
-	self.C.Val = vgui.Create("Button", self.C.MainPane) -- Validation line
+	self.C.Val = vgui.Create("Wire.IssueViewer", self.C.MainPane) -- Validation line
 	self.C.TabHolder = vgui.Create("DPropertySheet", self.C.MainPane)
+	self.C.TabHolder:SetPadding(1)
 
 	self.C.Btoggle = vgui.CreateFromTable(DMenuButton, self.C.Menu) -- Toggle Browser being shown
 	self.C.Sav = vgui.CreateFromTable(DMenuButton, self.C.Menu) -- Save button
@@ -788,6 +795,7 @@ function Editor:InitComponents()
 
 	self.C.Control = self:addComponent(vgui.Create("Panel", self), -350, 52, 342, -32) -- Control Panel
 	self.C.Credit = self:addComponent(vgui.Create("DTextEntry", self), -160, 52, 150, 150) -- Credit box
+	self.C.Credit:SetEditable(false)
 
 	self:CreateTab("generic")
 
@@ -798,6 +806,7 @@ function Editor:InitComponents()
 	self.C.Divider:Dock(FILL)
 	self.C.Divider:SetDividerWidth(4)
 	self.C.Divider:SetCookieName("wire_expression2_editor_divider")
+	self.C.Divider:SetLeftMin(0)
 
 	local DoNothing = function() end
 	self.C.MainPane.Paint = DoNothing
@@ -811,7 +820,7 @@ function Editor:InitComponents()
 
 	self.C.Menu:SetHeight(24)
 	self.C.Menu:DockPadding(2,2,2,2)
-	self.C.Val:SetHeight(22)
+	self.C.Val:SetHeight(self.C.Val.CollapseSize)
 
 	self.C.SaE:SetSize(80, 20)
 	self.C.SaE:Dock(RIGHT)
@@ -876,9 +885,6 @@ function Editor:InitComponents()
 	self.C.Val.UpdateColours = function(button, skin)
 		return button:SetTextStyleColor(skin.Colours.Button.Down)
 	end
-	self.C.Val.SetBGColor = function(button, r, g, b, a)
-		self.C.Val.bgcolor = Color(r, g, b, a)
-	end
 	self.C.Val.bgcolor = Color(255, 255, 255)
 	self.C.Val.Paint = function(button)
 		local w, h = button:GetSize()
@@ -889,13 +895,36 @@ function Editor:InitComponents()
 		if btn == MOUSE_RIGHT then
 			local menu = DermaMenu()
 			menu:AddOption("Copy to clipboard", function()
-				SetClipboardText(self.C.Val:GetValue():sub(4))
+				SetClipboardText(self.C.Val:GetValue())
 			end)
 			menu:Open()
 		else
 			self:Validate(true)
 		end
 	end
+	self.C.Val.OnIssueClicked = function(panel, issue)
+		if issue.trace ~= nil then
+			self:GetCurrentEditor():SetCaret({issue.trace.start_line, issue.trace.start_col})
+		end
+	end
+
+	self.C.Val.OnQuickFix = function(panel, issue)
+		local editor = self:GetCurrentEditor()
+
+		for _, fix in ipairs(issue.quick_fix) do
+			local trace = fix.at
+			editor:SetArea(
+				{
+					{ trace.start_line, trace.start_col },
+					{ trace.end_line, trace.end_col }
+				},
+				fix.replace
+			)
+		end
+
+		self:Validate()
+	end
+
 	self.C.Btoggle:SetImage("icon16/application_side_contract.png")
 	function self.C.Btoggle.DoClick(button)
 		if button.hide then
@@ -903,6 +932,7 @@ function Editor:InitComponents()
 		else
 			self.C.Divider:SetLeftWidth(0)
 		end
+		self.C.Divider:InvalidateLayout()
 		button:InvalidateLayout()
 	end
 
@@ -928,6 +958,24 @@ function Editor:InitComponents()
 	if self.E2 then self:Validate() end
 end
 
+-- code1 contains the code that is not to be marked
+local code1 = "@name \n@inputs \n@outputs \n@persist \n@strict\n\n"
+-- code2 contains the code that is to be marked, so it can simply be overwritten or deleted.
+local code2 = [[#[
+    Documentation, instructions and examples are available at:
+    https://github.com/wiremod/wire/wiki/Expression-2
+    ^ There you can read about: ^
+
+    - What is @strict and other directives (https://github.com/wiremod/wire/wiki/Expression-2-Directives)
+    - What are events (https://github.com/wiremod/wire/wiki/Expression-2-Events)
+    - What are lambdas (https://github.com/wiremod/wire/wiki/E2-Guide:-Lambdas)
+
+    You can find our Discord here: https://discord.gg/H8UKY3Y
+    You can find our Reddit here:  https://www.reddit.com/r/wiremod
+    Please report any bugs here:   https://github.com/wiremod/wire/issues
+]#]]
+local defaultcode = code1 .. code2 .. "\n"
+
 function Editor:AutoSave()
 	local buffer = self:GetCode()
 	if self.savebuffer == buffer or buffer == defaultcode or buffer == "" then return end
@@ -951,8 +999,6 @@ function Editor:AddControlPanelTab(label, icon, tooltip)
 end
 
 function Editor:InitControlPanel(frame)
-	local C = self.C.Control
-
 	-- Add a property sheet to hold the tabs
 	local tabholder = vgui.Create("DPropertySheet", frame)
 	tabholder:SetPos(2, 4)
@@ -982,16 +1028,16 @@ function Editor:InitControlPanel(frame)
 	end
 
 	-- Resize them at the right times
-	local old = frame.SetSize
+	local oldFrameSetSize = frame.SetSize
 	function frame:SetSize(...)
 		self:ResizeAll()
-		old(self, ...)
+		oldFrameSetSize(self, ...)
 	end
 
-	local old = frame.SetVisible
+	local oldFrameSetVisible = frame.SetVisible
 	function frame:SetVisible(...)
 		self:ResizeAll()
-		old(self, ...)
+		oldFrameSetVisible(self, ...)
 	end
 
 	-- Function to add more objects to resize automatically
@@ -1123,6 +1169,15 @@ function Editor:InitControlPanel(frame)
 	FontSizeSelect:SetPos(FontSelect:GetWide() + 4, 0)
 	FontSizeSelect:SetSize(50, 20)
 
+	local AntialiasEditor = vgui.Create("DCheckBoxLabel")
+	dlist:AddItem(AntialiasEditor)
+	AntialiasEditor:SetConVar("wire_expression2_editor_font_antialiasing")
+	AntialiasEditor:SetText("Enable antialiasing")
+	AntialiasEditor:SizeToContents()
+	AntialiasEditor:SetTooltip("Enables antialiasing of the editor's text.")
+	AntialiasEditor.OnChange = function(check, val)
+		self:ChangeFont(self.FontConVar:GetString(), self.FontSizeConVar:GetInt())
+	end
 
 	local label = vgui.Create("DLabel")
 	dlist:AddItem(label)
@@ -1143,7 +1198,7 @@ function Editor:InitControlPanel(frame)
 	AutoCompleteExtra:SizeToContents()
 	AutoCompleteExtra:SetTooltip("Enable/disable additional information for auto completion.")
 
-	local label = vgui.Create("DLabel")
+	label = vgui.Create("DLabel")
 	dlist:AddItem(label)
 	label:SetText("Auto completion control style")
 	label:SizeToContents()
@@ -1157,9 +1212,10 @@ function Editor:InitControlPanel(frame)
 	modes["Scroller"] = { 2, "Current mode:\nMouse scroller to choose item;\nMiddle mouse to use." }
 	modes["Scroller w/ Enter"] = { 3, "Current mode:\nMouse scroller to choose item;\nEnter to use." }
 	modes["Eclipse Style"] = { 4, "Current mode:\nEnter to use top match;\nTab to enter auto completion menu;\nArrow keys to choose item;\nEnter to use;\nSpace to abort." }
+	modes["Atom/IntelliJ style"] = { 5, "Current mode:\nTab/Enter to use;\nArrow keys to choose." }
 	-- modes["Qt Creator Style"]			= { 6, "Current mode:\nCtrl+Space to enter auto completion menu;\nSpace to abort; Enter to use top match." } <-- probably wrong. I'll check about adding Qt style later.
 
-	for k, v in pairs(modes) do
+	for k, _ in pairs(modes) do
 		AutoCompleteControlOptions:AddChoice(k)
 	end
 
@@ -1168,6 +1224,7 @@ function Editor:InitControlPanel(frame)
 	modes[2] = modes["Scroller"][2]
 	modes[3] = modes["Scroller w/ Enter"][2]
 	modes[4] = modes["Eclipse Style"][2]
+	modes[5] = modes["Atom/IntelliJ style"][2]
 	AutoCompleteControlOptions:SetToolTip(modes[GetConVar("wire_expression2_autocomplete_controlstyle"):GetInt()])
 
 
@@ -1183,7 +1240,7 @@ function Editor:InitControlPanel(frame)
 	HighightOnUse:SizeToContents()
 	HighightOnUse:SetTooltip("Enable/Disable highlighting of the entire word after using auto completion.\nIn E2, this is only for variables/constants, not functions.")
 
-	local label = vgui.Create("DLabel")
+	label = vgui.Create("DLabel")
 	dlist:AddItem(label)
 	label:SetText("Other options")
 	label:SizeToContents()
@@ -1232,15 +1289,23 @@ function Editor:InitControlPanel(frame)
 		self:GetParent():SetWorldClicker(bVal)
 	end
 
-	--------------------------------------------- EXPRESSION 2 TAB
-	local sheet = self:AddControlPanelTab("Expression 2", "icon16/computer.png", "Options for Expression 2.")
+	local ScrollToWarning = vgui.Create("DCheckBoxLabel")
+	dlist:AddItem(ScrollToWarning)
+	ScrollToWarning:SetConVar("wire_expression2_editor_show_warning_on_validate")
+	ScrollToWarning:SetText("Scroll to warning on validate")
+	ScrollToWarning:SizeToContents()
+	ScrollToWarning:SetTooltip("Scrolls to the topmost warning in the editor on validate.")
 
-	local dlist = vgui.Create("DPanelList", sheet.Panel)
+
+	--------------------------------------------- EXPRESSION 2 TAB
+	sheet = self:AddControlPanelTab("Expression 2", "icon16/computer.png", "Options for Expression 2.")
+
+	dlist = vgui.Create("DPanelList", sheet.Panel)
 	dlist.Paint = function() end
 	frame:AddResizeObject(dlist, 2, 2)
 	dlist:EnableVerticalScrollbar(true)
 
-	local label = vgui.Create("DLabel")
+	label = vgui.Create("DLabel")
 	dlist:AddItem(label)
 	label:SetText("Clientside expression 2 options")
 	label:SizeToContents()
@@ -1259,7 +1324,7 @@ function Editor:InitControlPanel(frame)
 	Concmd:SizeToContents()
 	Concmd:SetTooltip("Allow/disallow the E2 from running console commands on you.")
 
-	local label = vgui.Create("DLabel")
+	label = vgui.Create("DLabel")
 	dlist:AddItem(label)
 	label:SetText("Concmd whitelist")
 	label:SizeToContents()
@@ -1267,9 +1332,26 @@ function Editor:InitControlPanel(frame)
 	local ConcmdWhitelist = vgui.Create("DTextEntry")
 	dlist:AddItem(ConcmdWhitelist)
 	ConcmdWhitelist:SetConVar("wire_expression2_concmd_whitelist")
-	ConcmdWhitelist:SetToolTip("Separate the commands with commas.")
+	ConcmdWhitelist:SetTooltip("Separate the commands with commas.")
 
-	local label = vgui.Create("DLabel")
+	local Convar = vgui.Create("DCheckBoxLabel")
+	dlist:AddItem(Convar)
+	Convar:SetConVar("wire_expression2_convar")
+	Convar:SetText("convar")
+	Convar:SizeToContents()
+	Convar:SetTooltip("Allow/disallow the E2 from getting convar values from your player.")
+
+	label = vgui.Create("DLabel")
+	dlist:AddItem(label)
+	label:SetText("Convar whitelist")
+	label:SizeToContents()
+
+	local ConvarWhitelist = vgui.Create("DTextEntry")
+	dlist:AddItem(ConvarWhitelist)
+	ConvarWhitelist:SetConVar("wire_expression2_convar_whitelist")
+	ConvarWhitelist:SetTooltip("Separate the convars with commas.")
+
+	label = vgui.Create("DLabel")
 	dlist:AddItem(label)
 	label:SetText("Expression 2 block comment style")
 	label:SizeToContents()
@@ -1277,37 +1359,37 @@ function Editor:InitControlPanel(frame)
 	local BlockCommentStyle = vgui.Create("DComboBox")
 	dlist:AddItem(BlockCommentStyle)
 
-	local modes = {}
-	modes["New (alt 1)"] = {
+	local blockCommentModes = {}
+	blockCommentModes["New (alt 1)"] = {
 		0, [[Current mode:
 #[
 Text here
 Text here
 ]#]]
 	}
-	modes["New (alt 2)"] = {
+	blockCommentModes["New (alt 2)"] = {
 		1, [[Current mode:
 #[Text here
 Text here]# ]]
 	}
-	modes["Old"] = {
+	blockCommentModes["Old"] = {
 		2, [[Current mode:
 #Text here
 #Text here]]
 	}
 
-	for k, v in pairs(modes) do
+	for k, _ in pairs(blockCommentModes) do
 		BlockCommentStyle:AddChoice(k)
 	end
 
-	modes[0] = modes["New (alt 1)"][2]
-	modes[1] = modes["New (alt 2)"][2]
-	modes[2] = modes["Old"][2]
-	BlockCommentStyle:SetToolTip(modes[self.BlockCommentStyleConVar:GetInt()])
+	blockCommentModes[0] = blockCommentModes["New (alt 1)"][2]
+	blockCommentModes[1] = blockCommentModes["New (alt 2)"][2]
+	blockCommentModes[2] = blockCommentModes["Old"][2]
+	BlockCommentStyle:SetToolTip(blockCommentModes[self.BlockCommentStyleConVar:GetInt()])
 
 	BlockCommentStyle.OnSelect = function(panel, index, value)
-		panel:SetToolTip(modes[value][2])
-		RunConsoleCommand("wire_expression2_editor_block_comment_style", modes[value][1])
+		panel:SetToolTip(blockCommentModes[value][2])
+		RunConsoleCommand("wire_expression2_editor_block_comment_style", blockCommentModes[value][1])
 	end
 
 	local ops_sync_checkbox = vgui.Create("DCheckBoxLabel")
@@ -1318,9 +1400,9 @@ Text here]# ]]
 	ops_sync_checkbox:SetTooltip("Opt into live ops/cpu usage for all E2s on the server via the remote uploader tab. If you're not admin, this checkbox does nothing.")
 
 	-- ------------------------------------------- REMOTE UPDATER TAB
-	local sheet = self:AddControlPanelTab("Remote Updater", "icon16/world.png", "Manage your E2s from far away.")
+	sheet = self:AddControlPanelTab("Remote Updater", "icon16/world.png", "Manage your E2s from far away.")
 
-	local dlist = vgui.Create("DPanelList", sheet.Panel)
+	dlist = vgui.Create("DPanelList", sheet.Panel)
 	dlist.Paint = function() end
 	frame:AddResizeObject(dlist, 2, 2)
 	dlist:EnableVerticalScrollbar(true)
@@ -1353,7 +1435,7 @@ Text here]# ]]
 		local E2s = ents.FindByClass("gmod_wire_expression2")
 		dlist2:Clear()
 		local size = 0
-		for k, v in pairs(E2s) do
+		for _, v in ipairs(E2s) do
 			local ply = v:GetNWEntity("player", NULL)
 			if IsValid(ply) and ply == LocalPlayer() or showall then
 				local nick
@@ -1378,9 +1460,16 @@ Text here]# ]]
 				local label = vgui.Create("DLabel", panel)
 				local idx = v:EntIndex()
 
-				local str = string.format("Name: %s\nEntity ID: '%d'\nOwner: %s",name,idx,nick)
+				local ownerStr
+				if CPPI and v:CPPIGetOwner():GetName() ~= nick then
+					ownerStr = string.format("Owner: %s | Code Author: %s", v:CPPIGetOwner():GetName(), nick)
+				else
+					ownerStr = "Owner: " .. nick
+				end
+
+				local str = string.format("Name: %s\nEntity ID: '%d'\n%s", name, idx, ownerStr)
 				if LocalPlayer():IsAdmin() then
-					str = string.format("Name: %s\nEntity ID: '%d'\n%i ops, %i%% %s\ncpu time: %ius\nOwner: %s",name,idx,0,0,"",0,nick)
+					str = string.format("Name: %s\nEntity ID: '%d'\n%i ops, %i%% %s\ncpu time: %ius\n%s", name, idx, 0, 0, "", 0, ownerStr)
 				end
 
 				label:SetText(str)
@@ -1411,40 +1500,53 @@ Text here]# ]]
 
 							local hardtext = (prfcount / e2_hardquota > 0.33) and "(+" .. tostring(math.Round(prfcount / e2_hardquota * 100)) .. "%)" or ""
 
-							label:SetText(string.format("Name: %s\nEntity ID: '%d'\n%i ops, %i%% %s\ncpu time: %ius\nOwner: %s",name,idx,prfbench,prfbench / e2_softquota * 100,hardtext,timebench*1000000,nick))
+							label:SetText(string.format(
+								"Name: %s\nEntity ID: '%d'\n%i ops, %i%% %s\ncpu time: %ius\n%s",
+								name, idx,
+								prfbench, prfbench / e2_softquota * 100, hardtext,
+								timebench * 1000000,
+								ownerStr
+							))
 						end
 					end
 				end
 
-				local btn = vgui.Create("DButton", panel)
-				btn:SetText("Upload")
-				btn:SetSize(57, 18)
-				timer.Simple(0, function() btn:SetPos(panel:GetWide() - btn:GetWide() * 2 - 6, 4) end)
-				btn.DoClick = function(pnl)
-					WireLib.Expression2Upload(v)
+				do
+					local btn = vgui.Create("DButton", panel)
+					btn:SetText("Upload")
+					btn:SetSize(57, 18)
+					timer.Simple(0, function() btn:SetPos(panel:GetWide() - btn:GetWide() * 2 - 6, 4) end)
+					btn.DoClick = function(pnl)
+						WireLib.Expression2Upload(v)
+					end
 				end
 
-				local btn = vgui.Create("DButton", panel)
-				btn:SetText("Download")
-				btn:SetSize(57, 18)
-				timer.Simple(0, function() btn:SetPos(panel:GetWide() - btn:GetWide() - 4, 4) end)
-				btn.DoClick = function(pnl)
-					RunConsoleCommand("wire_expression_requestcode", v:EntIndex())
+				do
+					local btn = vgui.Create("DButton", panel)
+					btn:SetText("Download")
+					btn:SetSize(57, 18)
+					timer.Simple(0, function() btn:SetPos(panel:GetWide() - btn:GetWide() - 4, 4) end)
+					btn.DoClick = function(pnl)
+						RunConsoleCommand("wire_expression_requestcode", v:EntIndex())
+					end
 				end
 
-				local btn = vgui.Create("DButton", panel)
-				btn:SetText("Halt execution")
-				btn:SetSize(75, 18)
-				timer.Simple(0, function() btn:SetPos(panel:GetWide() - btn:GetWide() - 4, 24) end)
-				btn.DoClick = function(pnl)
-					RunConsoleCommand("wire_expression_forcehalt", v:EntIndex())
-				end
-				local btn2 = vgui.Create("DButton", panel)
-				btn2:SetText("Reset")
-				btn2:SetSize(39, 18)
-				timer.Simple(0, function() btn2:SetPos(panel:GetWide() - btn2:GetWide() - btn:GetWide() - 6, 24) end)
-				btn2.DoClick = function(pnl)
-					RunConsoleCommand("wire_expression_reset", v:EntIndex())
+				do
+					local btn = vgui.Create("DButton", panel)
+					btn:SetText("Halt execution")
+					btn:SetSize(75, 18)
+					timer.Simple(0, function() btn:SetPos(panel:GetWide() - btn:GetWide() - 4, 24) end)
+					btn.DoClick = function(pnl)
+						RunConsoleCommand("wire_expression_forcehalt", v:EntIndex())
+					end
+
+					local btn2 = vgui.Create("DButton", panel)
+					btn2:SetText("Reset")
+					btn2:SetSize(39, 18)
+					timer.Simple(0, function() btn2:SetPos(panel:GetWide() - btn2:GetWide() - btn:GetWide() - 6, 24) end)
+					btn2.DoClick = function(pnl)
+						RunConsoleCommand("wire_expression_reset", v:EntIndex())
+					end
 				end
 			end
 		end
@@ -1474,23 +1576,6 @@ function Editor:TranslateValues(panel, x, y)
 end
 
 -- options
-
--- code1 contains the code that is not to be marked
-local code1 = "@name \n@inputs \n@outputs \n@persist \n@trigger \n\n"
--- code2 contains the code that is to be marked, so it can simply be overwritten or deleted.
-local code2 = [[#[
-    Shoutout to Expression Advanced 2! Have you tried it yet?
-    You should try it. It's a hundred times faster than E2
-    and has more features. http://goo.gl/sZcyN9
-
-    A new preprocessor command, @autoupdate has been added.
-    See the wiki for more info.
-
-    Documentation and examples are available at:
-    http://wiki.wiremod.com/wiki/Expression_2
-    The community is available at http://www.wiremod.com
-]#]]
-local defaultcode = code1 .. code2 .. "\n"
 
 function Editor:NewScript(incurrent)
 	if not incurrent and self.NewTabOnOpen:GetBool() then
@@ -1568,7 +1653,7 @@ function Editor:OpenOldTabs()
 	self:FixTabFadeTime()
 
 	local is_first = true
-	for k, v in pairs(tabs) do
+	for _, v in pairs(tabs) do
 		if v and v ~= "" then
 			if (file.Exists(v, "DATA")) then
 				-- Open it in a new tab
@@ -1586,28 +1671,86 @@ function Editor:OpenOldTabs()
 	end
 end
 
-function Editor:Validate(gotoerror)
-	if self.EditorType == "E2" then
-		local errors = wire_expression2_validate(self:GetCode())
-		if not errors then
-			self.C.Val:SetBGColor(0, 110, 20, 255)
-			self.C.Val:SetText("   Validation successful")
-			return true
+-- On a successful validation run, will call this with the compiler object
+function Editor:SetValidateData(compiler)
+	-- Set methods and functions from all includes for syntax highlighting.
+	local editor = self:GetCurrentEditor()
+	editor.e2fs_functions = compiler.user_functions
+
+	local function_sigs = {}
+	for name, overloads in pairs(compiler.user_functions) do
+		for args in pairs(overloads) do
+			function_sigs[name .. "(" .. args .. ")"] = true
 		end
-		if gotoerror then
-			local row, col = errors:match("at line ([0-9]+), char ([0-9]+)$")
-			if not row then
-				row, col = errors:match("at line ([0-9]+)$"), 1
-			end
-			if row then self:GetCurrentEditor():SetCaret({ tonumber(row), tonumber(col) }) end
-		end
-		self.C.Val:SetBGColor(110, 0, 20, 255)
-		self.C.Val:SetText("   " .. errors)
-	elseif self.EditorType == "CPU" or self.EditorType == "GPU" or self.EditorType == "SPU" then
-		self.C.Val:SetBGColor(64, 64, 64, 180)
-		self.C.Val:SetText("   Recompiling...")
-		CPULib.Validate(self, self:GetCode(), self:GetChosenFile())
 	end
+
+	local allkeys = {}
+	for meta, names in pairs(compiler.user_methods) do
+		for name, overloads in pairs(names) do
+			allkeys[name] = true
+			for args in pairs(overloads) do
+				function_sigs[name .. "(" .. meta .. ":" .. args .. ")"] = true
+			end
+		end
+	end
+
+	editor.e2fs_methods = allkeys
+	editor.e2_functionsig_lookup = function_sigs
+end
+
+function Editor:Validate(gotoerror)
+	local header_color, header_text = nil, nil
+	local problems_errors, problems_warnings = {}, {}
+
+	if self.EditorType == "E2" then
+		local errors, _, warnings, compiler = self:Validator(self:GetCode(), self:GetChosenFile())
+
+		if not errors then ---@cast compiler -?
+			self:SetValidateData(compiler)
+
+			if warnings then
+				header_color = Color(163, 130, 64, 255)
+
+				local nwarnings = #warnings
+				local warning = warnings[1]
+
+				if gotoerror and self.ScrollToWarning:GetBool() then
+					header_text = "Warning (1/" .. nwarnings .. "): " .. warning.message
+
+					self:GetCurrentEditor():SetCaret { warning.trace.start_line, warning.trace.start_col  }
+				else
+					header_text = "Validated with " .. nwarnings .. " warning(s)."
+				end
+				problems_warnings = warnings
+			else
+				header_color = Color(0, 110, 20, 255)
+				header_text ="Validation successful"
+			end
+		else
+			header_color = Color(110, 0, 20, 255)
+
+			local nerrors, error = #errors, errors[1]
+
+			if gotoerror then
+				header_text = "Error (1/" .. nerrors .. "): " .. error.message
+
+				if error.trace then
+					self:GetCurrentEditor():SetCaret { error.trace.start_line, error.trace.start_col  }
+				end
+			else
+				header_text = "Failed to compile with " .. nerrors .. " errors(s)."
+			end
+
+			problems_errors = errors
+		end
+
+	elseif self.Validator then
+		header_color = Color(64, 64, 64, 180)
+		header_text = "Recompiling..."
+		self:Validator(self:GetCode(), self:GetChosenFile())
+	end
+
+	self.C.Val:Update(problems_errors, problems_warnings, header_text, header_color)
 	return true
 end
 
@@ -1698,6 +1841,7 @@ end
 
 function Editor:Open(Line, code, forcenewtab)
 	if self:IsVisible() and not Line and not code then self:Close() end
+	hook.Run("WireEditorOpen", self, Line, code, forcenewtab)
 	self:SetV(true)
 	if self.chip then
 		self.C.SaE:SetText("Upload & Exit")
@@ -1717,7 +1861,7 @@ function Editor:Open(Line, code, forcenewtab)
 				end
 			end
 		end
-		local title, tabtext = getPreferredTitles(Line, code)
+		local _, tabtext = getPreferredTitles(Line, code)
 		local tab
 		if self.NewTabOnOpen:GetBool() or forcenewtab then
 			tab = self:CreateTab(tabtext).Tab
@@ -1744,6 +1888,7 @@ function Editor:SaveFile(Line, close, SaveAs)
 		self:Close()
 		return
 	end
+
 	if not Line or SaveAs or Line == self.Location .. "/" .. ".txt" then
 		local str
 		if self.C.Browser.File then
@@ -1771,25 +1916,52 @@ function Editor:SaveFile(Line, close, SaveAs)
 		Derma_StringRequestNoBlur("Save to New File", "", (str ~= nil and str .. "/" or "") .. self.savefilefn,
 			function(strTextOut)
 				strTextOut = string.gsub(strTextOut, ".", invalid_filename_chars)
-				self:SaveFile(self.Location .. "/" .. strTextOut .. ".txt", close)
+				local save_location = self.Location .. "/" .. strTextOut .. ".txt"
+				if file.Exists(save_location, "DATA") then
+					Derma_QueryNoBlur("The file '" .. strTextOut .. "' already exists. Do you want to overwrite it?", "File already exists",
+					"Yes", function() self:SaveFile(save_location, close) end,
+					"No", function() end)
+				else
+					self:SaveFile(save_location, close)
+				end
+
+				self:UpdateActiveTabTitle()
 			end)
 		return
 	end
 
+	if string.GetFileFromFilename(Line) == ".txt" then
+		surface.PlaySound("buttons/button10.wav")
+		GAMEMODE:AddNotify("Failed to save file without filename!", NOTIFY_ERROR, 7)
+		return
+	end
+
+	local path = string.GetPathFromFilename(Line)
+	if not file.IsDir(path, "DATA") then
+		file.CreateDir(path)
+	end
+
 	file.Write(Line, self:GetCode())
 
-	local panel = self.C.Val
-	timer.Simple(0, function() panel.SetText(panel, "   Saved as " .. Line) end)
-	surface.PlaySound("ambient/water/drip3.wav")
+	local f = file.Open(Line, "r", "DATA")
+	if f then
+		f:Close()
+		local panel = self.C.Val
+		timer.Simple(0, function() panel.SetText(panel, "   Saved as " .. Line) end)
+		surface.PlaySound("ambient/water/drip3.wav")
 
-	if not self.chip then self:ChosenFile(Line) end
-	if close then
-		if self.E2 then
-			GAMEMODE:AddNotify("Expression saved as " .. Line .. ".", NOTIFY_GENERIC, 7)
-		else
-			GAMEMODE:AddNotify("Source code saved as " .. Line .. ".", NOTIFY_GENERIC, 7)
+		if not self.chip then self:ChosenFile(Line) end
+		if close then
+			if self.E2 then
+				GAMEMODE:AddNotify("Expression saved as " .. Line .. ".", NOTIFY_GENERIC, 7)
+			else
+				GAMEMODE:AddNotify("Source code saved as " .. Line .. ".", NOTIFY_GENERIC, 7)
+			end
+			self:Close()
 		end
-		self:Close()
+	else
+		surface.PlaySound("buttons/button10.wav")
+		GAMEMODE:AddNotify("Failed to save file as " .. Line .. ".", NOTIFY_ERROR, 7)
 	end
 end
 
@@ -1815,33 +1987,49 @@ function Editor:LoadFile(Line, forcenewtab)
 				end
 			end
 		end
-		if not self.chip then
-			local title, tabtext = getPreferredTitles(Line, str)
-			local tab
-			if self.NewTabOnOpen:GetBool() or forcenewtab then
-				tab = self:CreateTab(tabtext).Tab
-			else
-				tab = self:GetActiveTab()
-				tab:SetText(tabtext)
-				self.C.TabHolder:InvalidateLayout()
-			end
-			self:SetActiveTab(tab)
-			self:ChosenFile(Line)
+
+		local _, tabtext = getPreferredTitles(Line, str)
+		local tab
+		if self.NewTabOnOpen:GetBool() or forcenewtab then
+			tab = self:CreateTab(tabtext).Tab
+		else
+			tab = self:GetActiveTab()
+			tab:SetText(tabtext)
+			self.C.TabHolder:InvalidateLayout()
 		end
+		self:SetActiveTab(tab)
+		self:ChosenFile(Line)
+
 		self:SetCode(str)
 	end
 end
 
 function Editor:Close()
 	timer.Stop("e2autosave")
-	self:AutoSave()
+	local ok, err = pcall(self.AutoSave, self)
+	if not ok then
+		WireLib.Notify(nil, "Failed to autosave file while closing E2 editor.\n" .. err, 3)
+	end
 
-	self:Validate()
-	self:ExtractName()
+	ok = pcall(self.Validate, self)
+	if not ok then
+		WireLib.Notify(nil, "Failed to validate file while closing E2 editor.\n", 2)
+	end
+
+	ok, err = pcall(self.ExtractName, self)
+	if not ok then
+		WireLib.Notify(nil, "Failed to extract name while closing E2 editor.\n" .. err, 3)
+	end
+
 	self:SetV(false)
 	self.chip = false
 
-	self:SaveEditorSettings()
+	ok, err = pcall(self.SaveEditorSettings, self)
+	if not ok then
+		WireLib.Notify(nil, "Failed to save editor settings while closing E2 editor.\n" .. err, 3)
+	end
+
+	hook.Run("WireEditorClose", self)
 end
 
 function Editor:Setup(nTitle, nLocation, nEditorType)
@@ -1850,25 +2038,10 @@ function Editor:Setup(nTitle, nLocation, nEditorType)
 	self.EditorType = nEditorType
 	self.C.Browser:Setup(nLocation)
 
-	local textEditorModes = {
-		CPU = "ZCPU",
-		GPU = "ZCPU",
-		SPU = "ZCPU",
-		E2 = "E2",
-		[""] = "Default"
-	}
+	self:SetEditorMode(nEditorType or "Default")
+	local editorMode = WireTextEditor.Modes[self:GetEditorMode() or "Default"]
 
-	local helpModes = {
-		CPU = E2Helper.UseCPU,
-		GPU = E2Helper.UseCPU,
-		SPU = E2Helper.UseCPU,
-		E2 = E2Helper.UseE2
-	}
-
-	self:SetEditorMode(textEditorModes[nEditorType or ""])
-
-
-	local helpMode = helpModes[nEditorType or ""]
+	local helpMode = E2Helper.Modes[nEditorType or ""] or E2Helper.Modes[(editorMode and editorMode.E2HelperCategory) or ""]
 	if helpMode then -- Add "E2Helper" button
 		local E2Help = vgui.Create("Button", self.C.Menu)
 		E2Help:SetSize(58, 20)
@@ -1876,15 +2049,23 @@ function Editor:Setup(nTitle, nLocation, nEditorType)
 		E2Help:SetText("E2Helper")
 		E2Help.DoClick = function()
 			E2Helper.Show()
-			helpMode(nEditorType)
-			E2Helper.Update()
+			if editorMode and editorMode.E2HelperCategory then
+				E2Helper:SetMode(editorMode.E2HelperCategory)
+			else
+				E2Helper:SetMode(nEditorType)
+			end
 		end
 		self.C.E2Help = E2Help
 	end
-
-	local useValidator = nEditorType ~= nil
-	local useSoundBrowser = nEditorType == "SPU" or nEditorType == "E2"
-	local useDebugger = nEditorType == "CPU"
+	local useValidator = false
+	local useSoundBrowser = false
+	if editorMode then
+		useValidator = editorMode.UseValidator
+		useSoundBrowser = editorMode.UseSoundBrowser
+		if useValidator and editorMode.Validator then
+			self.Validator = editorMode.Validator -- Takes self, self:GetCode(), self:GetChosenFile()
+		end
+	end
 
 	if not useValidator then
 		self.C.Val:SetVisible(false)
@@ -1899,53 +2080,16 @@ function Editor:Setup(nTitle, nLocation, nEditorType)
 		self.C.SoundBrw = SoundBrw
 	end
 
-	if useDebugger then
-		-- Add "step forward" button
-		local DebugForward = self:addComponent(vgui.Create("Button", self), -306, 31, -226, 20)
-		DebugForward:SetText("Step Forward")
-		DebugForward.Font = "E2SmallFont"
-		DebugForward.DoClick = function()
-			local currentPosition = CPULib.Debugger.PositionByPointer[CPULib.Debugger.Variables.IP]
-			if currentPosition then
-				local linePointers = CPULib.Debugger.PointersByLine[currentPosition.Line .. ":" .. currentPosition.File]
-				if linePointers then -- Run till end of line
-					RunConsoleCommand("wire_cpulib_debugstep", linePointers[2])
-				else -- Run just once
-					RunConsoleCommand("wire_cpulib_debugstep")
-				end
-			else -- Run just once
-				RunConsoleCommand("wire_cpulib_debugstep")
-			end
-			-- Reset interrupt text
-			CPULib.InterruptText = nil
-		end
-		self.C.DebugForward = DebugForward
-
-		-- Add "reset" button
-		local DebugReset = self:addComponent(vgui.Create("Button", self), -346, 31, -306, 20)
-		DebugReset:SetText("Reset")
-		DebugReset.DoClick = function()
-			RunConsoleCommand("wire_cpulib_debugreset")
-			-- Reset interrupt text
-			CPULib.InterruptText = nil
-		end
-		self.C.DebugReset = DebugReset
-
-		-- Add "run" button
-		local DebugRun = self:addComponent(vgui.Create("Button", self), -381, 31, -346, 20)
-		DebugRun:SetText("Run")
-		DebugRun.DoClick = function() RunConsoleCommand("wire_cpulib_debugrun") end
-		self.C.DebugRun = DebugRun
-	end
-
 	if nEditorType == "E2" then
 		self.E2 = true
-		self:NewScript(true) -- insert default code
 	end
+
+	self:NewScript(true) -- Opens initial tab, in case OpenOldTabs is disabled or fails.
 
 	if wire_expression2_editor_openoldtabs:GetBool() then
 		self:OpenOldTabs()
 	end
+	self:LoadSyntaxColors()
 
 	self:InvalidateLayout()
 end

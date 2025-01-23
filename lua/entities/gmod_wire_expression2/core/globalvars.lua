@@ -3,9 +3,17 @@ gvars v2
 Made by Divran
 ]]
 
+E2Lib.RegisterExtension( "gtable", true, "Allows users to create gTables to transmit data between E2 chips.", "!!! Very easy to exploit to use a ton of server memory. Superceded by event remote." )
+
 local gvars = {}
 gvars.shared = {}
 gvars.safe = {} -- Safe from hacking using gTableSafe
+
+hook.Add("Wire_EmergencyRamClear","gvars_EmergencyRamClear",function()
+	gvars = {}
+	gvars.shared = {}
+	gvars.safe = {}
+end)
 
 ------------------------------------------------------------------------------------------------
 -- GVARS V2
@@ -16,9 +24,7 @@ gvars.safe = {} -- Safe from hacking using gTableSafe
 registerType( "gtable", "xgt", {},
 	function(self) self.entity:Error("You may not input a gtable.") end,
 	function(self) self.entity:Error("You may not output a gtable.") end,
-	function(retval)
-		if !istable(retval) then error("Return value is not a gtable, but a "..type(retval).."!",0) end
-	end,
+	nil,
 	function(v)
 		return !istable(v)
 	end
@@ -26,72 +32,8 @@ registerType( "gtable", "xgt", {},
 
 __e2setcost(1)
 
-registerOperator("ass", "xgt", "xgt", function(self, args)
-	local lhs, op2, scope = args[2], args[3], args[4]
-	local      rhs = op2[1](self, op2)
-
-	local Scope = self.Scopes[scope]
-	if !Scope.lookup then Scope.lookup = {} end
-	local lookup = Scope.lookup
-
-	-- remove old lookup entry
-	if lookup[rhs] then lookup[rhs][lhs] = nil end
-
-	-- add new lookup entry
-	local lookup_entry = lookup[rhs]
-	if not lookup_entry then
-		lookup_entry = {}
-		lookup[rhs] = lookup_entry
-	end
-	lookup_entry[lhs] = true
-
-	--Scope.vars[lhs] = rhs
-	Scope[lhs] = rhs
-	Scope.vclk[lhs] = true
-	return rhs
-end)
-
-registerOperator("fea","xgt","",function(self,args)
-	local keyname,valname,valtypeid = args[2],args[3],args[4]
-	local tbl = args[5]
-	tbl = tbl[1](self,tbl)
-	local statement = args[6]
-
-	local len = valtypeid:len()
-
-	local keys = {}
-	local count = 0
-	for key,_ in pairs(tbl) do
-		if key:sub(1,len) == valtypeid then
-			count = count + 1
-			keys[count] = key
-		end
-	end
-
-	for i=1,count do
-		self:PushScope()
-		local key = keys[i]
-		if tbl[key] ~= nil then
-			self.prf = self.prf + 3
-
-			self.Scope.vclk[keyname] = true
-			self.Scope.vclk[valname] = true
-
-			self.Scope[keyname] = key:sub(len+1)
-			self.Scope[valname] = tbl[key]
-
-			local ok, msg = pcall(statement[1], self, statement)
-			if not ok then
-				if msg == "break" then self:PopScope() break
-				elseif msg ~= "continue" then self:PopScope() error(msg, 0) end
-			end
-		end
-		self:PopScope()
-	end
-end)
-
-e2function number operator_is( gtable tbl )
-	return istable(tbl) and 1 or 0
+e2function number operator_is(gtable this)
+	return istable(this) and 1 or 0
 end
 
 ------------------------------------------------
@@ -157,9 +99,11 @@ end
 
 local string_sub = string.sub
 e2function table gtable:toTable()
-	local ret = {n={},ntypes={},s={},stypes={},size=0,istable=true,depth=0}
+	local ret = E2Lib.newE2Table()
 
 	for k,v in pairs( this ) do
+		if self.prf > e2_tickquota then error("perf", 0) end
+
 		local typeid, index = string_sub( k, 1,1 ), string_sub( k, 2 )
 		if typeid == "x" then
 			typeid = string_sub( k, 1,3 )
@@ -169,9 +113,9 @@ e2function table gtable:toTable()
 		ret.s[index] = v
 		ret.stypes[index] = typeid
 		ret.size = ret.size + 1
-	end
 
-	self.prf = self.prf + ret.size / 3
+		self.prf = self.prf + 3
+	end
 
 	return ret
 end
@@ -188,38 +132,37 @@ local non_allowed_types = { -- If anyone can think of any other types that shoul
 	xgt = true,
 }
 
+local fixDefault = E2Lib.fixDefault
+
 registerCallback("postinit",function()
 	for k,v in pairs( wire_expression_types ) do
 		if (!non_allowed_types[v[1]]) then
 			if (k == "NORMAL") then k = "NUMBER" end
 			k = upperfirst(k)
 
+			__e2setcost(5)
 
 			-- Table[index,type] functions
-			local function getf( self, args )
-				local op1, op2 = args[2], args[3]
-				local rv1, rv2 = op1[1](self, op1), op2[1](self, op2)
-				if isnumber(rv2) then rv2 = tostring(rv2) end
-				local val = rv1[v[1]..rv2]
-				if (val) then -- If the var exists
+			local function getf(state, gtable, key)
+				if isnumber(key) then key = tostring(key) end
+				local val = gtable[v[1]..key]
+				if val then -- If the var exists
 					return val -- return it
+				else
+					return fixDefault(v[2])
 				end
-				local default = v[2]
-				if istable(default) then default = table.Copy(default) end
-				return default
-			end
-			local function setf( self, args )
-				local op1, op2, op3 = args[2], args[3], args[4]
-				local rv1, rv2, rv3 = op1[1](self, op1), op2[1](self, op2), op3[1](self, op3)
-				if isnumber(rv2) then rv2 = tostring(rv2) end
-				rv1[v[1]..rv2] = rv3
-				return rv3
 			end
 
-			registerOperator("idx", v[1].."=xgts", v[1], getf) -- G[S,type]
-			registerOperator("idx", v[1].."=xgts"..v[1], v[1], setf) -- G[S,type]
-			registerOperator("idx", v[1].."=xgtn", v[1], getf) -- G[N,type] (same as G[N:toString(),type])
-			registerOperator("idx", v[1].."=xgtn"..v[1], v[1], setf) -- G[N,type] (same as G[N:toString(),type])
+			local function setf(state, gtable, key, value)
+				if isnumber(key) then key = tostring(key) end
+				gtable[v[1] .. key] = value
+				return value
+			end
+
+			registerOperator("indexget", "xgts" .. v[1], v[1], getf) -- G[S,type]
+			registerOperator("indexset", "xgts".. v[1], "", setf) -- G[S,type]
+			registerOperator("indexget", "xgtn" .. v[1], v[1], getf) -- G[N,type] (same as G[N:toString(),type])
+			registerOperator("indexset", "xgtn".. v[1], "", setf) -- G[N,type] (same as G[N:toString(),type])
 			------
 
 			--gRemove* -- Remove the variable at the specified index and return it
@@ -231,9 +174,7 @@ registerCallback("postinit",function()
 					rv1[v[1]..rv2] = nil
 					return val
 				end
-				local default = v[2]
-				if istable(default) then default = table.Copy(default) end
-				return default
+				return E2Lib.fixDefault(v[2])
 			end)
 
 			-- gRemoveAll*() - Remove all variables of a type in the player's non-shared table
@@ -264,10 +205,29 @@ registerCallback("postinit",function()
 				end
 			end)
 
+			--------------------------------------------------------------------------------
+			-- gTable converts all numeric indexes to strings, so we can only support iterating string keys
+			--------------------------------------------------------------------------------
+			__e2setcost(1)
+
+			local len = #v[1]
+
+			local function iter(tbl, i)
+				local key, value = next(tbl, i)
+				if key and key:sub(1, len) == v[1] then
+					return key, value
+				end
+			end
+
+			registerOperator("iter", "s" .. v[1] .. "=xgt", "", function(state, gtable)
+				return function()
+					return iter, gtable
+				end
+			end)
+
 		end -- allowed check
 	end -- loop
 end) -- postinit
-
 
 ------------------------------------------------------------------------------------------------
 -- ALL BELOW FUNCTIONS ARE DEPRECATED (Only for compability)
@@ -277,22 +237,27 @@ end) -- postinit
 ------------------------------------------------
 __e2setcost(1)
 
+[deprecated]
 e2function void gSetGroup( string groupname )
 	self.data.gvars.group = groupname
 end
 
+[deprecated]
 e2function string gGetGroup()
 	return self.data.gvars.group or ""
 end
 
+[deprecated]
 e2function void gShare( number share )
 	self.data.gvars.shared = math.Clamp(share,0,1)
 end
 
+[deprecated]
 e2function number gGetShare()
 	return self.data.gvars.shared or 0
 end
 
+[deprecated]
 e2function void gResetGroup()
 	self.data.gvars.group = "default"
 end
@@ -320,9 +285,6 @@ registerCallback("postinit",function()
 	end
 
 	for k,v in pairs( types ) do
-
-		__e2setcost(8)
-
 		-- gSet*(S,*)
 		registerFunction("gSet"..k,"s"..v[1],"",function(self,args)
 			local op1, op2 = args[2], args[3]
@@ -334,7 +296,7 @@ registerCallback("postinit",function()
 				if (!gvars[self.uid][self.data.gvars.group]) then gvars[self.uid][self.data.gvars.group] = {} end
 				gvars[self.uid][self.data.gvars.group][v[1]..rv1] = rv2
 			end
-		end)
+		end, 8, nil, { deprecated = true })
 
 		-- gGet*(S)
 		registerFunction("gGet"..k,"s",v[1],function(self,args)
@@ -343,17 +305,13 @@ registerCallback("postinit",function()
 			if (self.data.gvars.shared == 1) then
 				local ret = GetVar(self.data.gvars.group,gvars.shared,rv1,v[1])
 				if (ret) then return ret end
-				local default = v[2][2]
-				if istable(default) then default = table.Copy(default) end
-				return default
+				return E2Lib.fixDefault(v[2][2])
 			else
 				local ret = GetVar(self.data.gvars.group,gvars[self.uid],rv1,v[1])
 				if (ret) then return ret end
-				local default = v[2][2]
-				if istable(default) then default = table.Copy(default) end
-				return default
+				return E2Lib.fixDefault(v[2][2])
 			end
-		end)
+		end, 8, nil, { deprecated = true })
 
 		-- gSet*(N,*) (same as gSet*(N:toString(),*)
 		registerFunction("gSet"..k,"n"..v[1],"",function(self,args)
@@ -366,7 +324,7 @@ registerCallback("postinit",function()
 				if (!gvars[self.uid][self.data.gvars.group]) then gvars[self.uid][self.data.gvars.group] = {} end
 				gvars[self.uid][self.data.gvars.group][v[1]..tostring(rv1)] = rv2
 			end
-		end)
+		end, 8, nil, { deprecated = true })
 
 		-- gGet*(N) (same as gGet*(N:toString()))
 		registerFunction("gGet"..k,"n",v[1],function(self,args)
@@ -375,17 +333,13 @@ registerCallback("postinit",function()
 			if (self.data.gvars.shared == 1) then
 				local ret = GetVar(self.data.gvars.group,gvars.shared,rv1,v[1])
 				if (ret) then return ret end
-				local default = v[2][2]
-				if istable(default) then default = table.Copy(default) end
-				return default
+				return E2Lib.fixDefault(v[2][2])
 			else
 				local ret = GetVar(self.data.gvars.group,gvars[self.uid],rv1,v[1])
 				if (ret) then return ret end
-				local default = v[2][2]
-				if istable(default) then default = table.Copy(default) end
-				return default
+				return E2Lib.fixDefault(v[2][2])
 			end
-		end)
+		end, 8, nil, { deprecated = true })
 
 		-- gDelete*(S)
 		registerFunction("gDelete"..k,"s",v[1],function(self,args)
@@ -408,10 +362,8 @@ registerCallback("postinit",function()
 					end
 				end
 			end
-			local default = v[2][2]
-			if istable(default) then default = table.Copy(default) end
-			return default
-		end)
+			return E2Lib.fixDefault(v[2][2])
+		end, 8, nil, { deprecated = true })
 
 		-- gDelete*(N) (same as gDelete*(N:toString()))
 		registerFunction("gDelete"..k,"n",v[1],function(self,args)
@@ -434,12 +386,8 @@ registerCallback("postinit",function()
 					end
 				end
 			end
-			local default = v[2][2]
-			if istable(default) then default = table.Copy(default) end
-			return default
-		end)
-
-		__e2setcost(5)
+			return E2Lib.fixDefault(v[2][2])
+		end, 8, nil, { deprecated = true })
 
 		-- gDeleteAll*()
 		registerFunction("gDeleteAll"..k,"","",function(self,args)
@@ -449,7 +397,7 @@ registerCallback("postinit",function()
 					v = nil
 				end
 			end
-		end)
+		end, 5, nil, { deprecated = true })
 	end
 
 end)
